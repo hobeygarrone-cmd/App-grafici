@@ -58,19 +58,57 @@ CHART_TYPES = [
 
 MAP_KEYS = {"choropleth", "bubble_map", "band_map", "pin_map"}
 
+_SDG_COLORS = [
+    "#E5243B","#DDA63A","#4C9F38","#C5192D","#FF3A21",
+    "#26BDE2","#FCC30B","#A21942","#FD6925","#DD1367",
+    "#FD9D24","#BF8B2E","#3F7E44","#0A97D9","#56C02B",
+    "#00689D","#19486A",
+]
+
+# Palette istituzionali (liste di colori esadecimali)
+_BRAND_PALETTES = {
+    "CRT":     ["#312A74","#FDC400","#5C5499","#F0A800","#1E1A55","#FFD966","#7B73AA","#E8C000"],
+    "ISP":     ["#004258","#B10931","#326779","#D43060","#005A74","#E05070","#007A9A","#FF6080"],
+    "Cariplo": ["#002F6C","#E31937","#0057B8","#FF4D4D","#003F8A","#C0392B","#1565C0","#FF7043"],
+    "Carisbo": ["#1C1C1C","#D40000","#555555","#FF6666","#333333","#B30000","#888888","#FF9999"],
+    "BS2026":  ["#1E3264","#3D4FA0","#9089C0","#2A6B5A","#3B9878","#7BC5A0","#F0A020","#888FA0"],
+    "BS26-2":  ["#21345C","#5B8DC8","#3EA8A5","#D98A25","#8870B0","#89C0A5","#A89880","#C0CEDE"],
+    "BS26-3":  ["#1C2B5A","#3C68B5","#E8A020","#8890A0","#5878C8","#C47A10","#2A3870","#B0B8C8"],
+    "Default": ["#156082","#E97132","#196B24","#0F9ED5","#A02B93","#4EA72E","#467886","#96607D"],
+    "SDG":     _SDG_COLORS,
+}
+
 PALETTES = {
-    "Predefinito": None,
-    "Tab10":       "tab10",
-    "Set2":        "Set2",
-    "Set3":        "Set3",
-    "Paired":      "Paired",
-    "Pastel":      "Pastel1",
-    "Scuro":       "Dark2",
-    "Blues":       "Blues",
-    "Reds":        "Reds",
-    "Greens":      "Greens",
-    "YlOrRd":      "YlOrRd",
-    "RdYlGn":      "RdYlGn",
+    # ── Istituzionali ────────────────────────────────────────────────────────
+    "CRT":       "CRT",
+    "ISP":       "ISP",
+    "Cariplo":   "Cariplo",
+    "Carisbo":   "Carisbo",
+    "BS2026":    "BS2026",
+    "BS26-2":    "BS26-2",
+    "BS26-3":    "BS26-3",
+    "Default":   "Default",
+    "SDG":       "SDG",
+    # ── Qualitative matplotlib ───────────────────────────────────────────────
+    "Tab10":     "tab10",
+    "Tab20":     "tab20",
+    "Set1":      "Set1",
+    "Set2":      "Set2",
+    "Set3":      "Set3",
+    "Paired":    "Paired",
+    "Pastel":    "Pastel1",
+    "Scuro":     "Dark2",
+    # ── Sequenziali / divergenti ─────────────────────────────────────────────
+    "Blues":     "Blues",
+    "Greens":    "Greens",
+    "Reds":      "Reds",
+    "Oranges":   "Oranges",
+    "Purples":   "Purples",
+    "YlOrRd":    "YlOrRd",
+    "RdYlGn":    "RdYlGn",
+    "Viridis":   "viridis",
+    "Plasma":    "plasma",
+    "Coolwarm":  "coolwarm",
 }
 
 MAP_SCOPES = [
@@ -269,6 +307,9 @@ def _agg(df_, x_col, y_col, grp_col=None):
 
 
 def _colors(n, palette_name):
+    brand = _BRAND_PALETTES.get(palette_name)
+    if brand:
+        return [brand[i % len(brand)] for i in range(n)]
     cmap = plt.get_cmap(palette_name) if palette_name else plt.get_cmap("tab10")
     return [cmap(i / max(n - 1, 1)) for i in range(n)]
 
