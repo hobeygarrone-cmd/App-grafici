@@ -392,6 +392,104 @@ def _apply_style(ax_, title, xlabel, ylabel, show_legend, show_grid, opts=None):
             ax_.get_figure().patch.set_facecolor("white")
 
 
+_GRID_STYLE_MAP = {
+    "—  solida":        "-",
+    "-- tratteggiata":  "--",
+    ":  punteggiata":   ":",
+    "-. tratto-punto":  "-.",
+}
+_SCALE_TYPES = ["Normale", "Log10", "Log₂", "Sqrt"]
+
+
+def _apply_axis_settings(ax, opts):
+    """Applica scala, minor tick e griglia avanzata (portato dal desktop)."""
+    import matplotlib.ticker as mticker
+    from matplotlib.ticker import MultipleLocator, AutoMinorLocator
+    from matplotlib.ticker import FixedLocator
+
+    for axis_name in ("x", "y"):
+        sc     = str(opts.get(f"{axis_name}_scale", "Normale"))
+        mn_s   = str(opts.get(f"{axis_name}_min", "")).strip()
+        mx_s   = str(opts.get(f"{axis_name}_max", "")).strip()
+        step_s = str(opts.get(f"{axis_name}_step", "")).strip()
+        set_scale = ax.set_xscale if axis_name == "x" else ax.set_yscale
+        mpl_axis  = ax.xaxis     if axis_name == "x" else ax.yaxis
+        set_lim   = ax.set_xlim  if axis_name == "x" else ax.set_ylim
+        # Salta assi categoriali (FixedLocator = bar chart con etichette)
+        is_cat = isinstance(mpl_axis.get_major_locator(), FixedLocator)
+        if not is_cat:
+            try:
+                if sc == "Log10":
+                    set_scale("log", base=10)
+                elif sc == "Log₂":
+                    set_scale("log", base=2)
+                elif sc == "Sqrt":
+                    set_scale("function", functions=(
+                        lambda v: np.sqrt(np.clip(v, 0, None)),
+                        lambda v: np.square(v),
+                    ))
+            except Exception:
+                pass
+            # Scala log: limite inferiore deve essere > 0
+            if sc in ("Log10", "Log₂"):
+                lo, hi = (ax.get_xlim() if axis_name == "x" else ax.get_ylim())
+                if lo <= 0 < hi:
+                    try:
+                        dmin, _ = mpl_axis.get_data_interval()
+                        pos_lo = dmin if dmin > 0 else hi / 100
+                    except Exception:
+                        pos_lo = hi / 100
+                    try:
+                        set_lim(pos_lo, hi)
+                    except Exception:
+                        pass
+                mpl_axis.set_major_formatter(
+                    mticker.FuncFormatter(
+                        lambda v, pos: f"{int(v):,}" if v >= 1 and v == int(v) else f"{v:g}"
+                    )
+                )
+            if step_s:
+                try:
+                    mpl_axis.set_major_locator(MultipleLocator(float(step_s)))
+                except Exception:
+                    pass
+            if opts.get(f"{axis_name}_minor", False):
+                try:
+                    ndiv = int(opts.get(f"{axis_name}_minor_ndiv", 5))
+                    mpl_axis.set_minor_locator(AutoMinorLocator(ndiv))
+                except Exception:
+                    pass
+
+    # ── Griglia avanzata ──────────────────────────────────────────────────────
+    _has_adv_grid = any(opts.get(k, False) for k in
+                        ("gx_maj", "gx_min", "gy_maj", "gy_min"))
+    if _has_adv_grid:
+        ax.grid(False, which="both")   # azzera griglia precedente
+
+    for axis_name, pfx in [("x", "gx"), ("y", "gy")]:
+        mpl_axis = ax.xaxis if axis_name == "x" else ax.yaxis
+        if opts.get(f"{pfx}_maj", False):
+            sty = _GRID_STYLE_MAP.get(str(opts.get(f"{pfx}_maj_sty", "--")), "--")
+            try:
+                alp = float(opts.get(f"{pfx}_maj_alp", 0.4))
+                lw  = float(opts.get(f"{pfx}_maj_lw",  0.8))
+                mpl_axis.grid(True, which="major", linestyle=sty, alpha=alp, linewidth=lw)
+            except Exception:
+                pass
+        if opts.get(f"{pfx}_min", False):
+            sty = _GRID_STYLE_MAP.get(str(opts.get(f"{pfx}_min_sty", ":")), ":")
+            try:
+                alp  = float(opts.get(f"{pfx}_min_alp", 0.25))
+                lw   = float(opts.get(f"{pfx}_min_lw",  0.5))
+                ndiv = int(opts.get(f"{pfx}_min_ndiv",  5))
+                mpl_axis.set_minor_locator(AutoMinorLocator(ndiv))
+                ax.tick_params(axis=axis_name, which="minor",
+                               grid_linestyle=sty, grid_alpha=alp, grid_linewidth=lw)
+                ax.grid(True, which="minor")
+            except Exception:
+                pass
+
+
 def _normalize_geo(series: pd.Series, name_up: dict) -> pd.Series:
     """Normalizza i nomi geografici: maiuscolo + risolve alias."""
     return series.astype(str).str.strip().str.upper().map(name_up).fillna(
@@ -711,27 +809,61 @@ if "active_tab" not in st.session_state:
 
 # Valori di default per le opzioni di personalizzazione
 _OPT_DEFAULTS = {
-    "opt_title":       "",
-    "opt_title_sz":    13,
-    "opt_title_bold":  True,
-    "opt_title_ital":  False,
-    "opt_palette_nm":  list(PALETTES.keys())[0],
-    "opt_show_leg":    True,
-    "opt_xlabel":      "",
-    "opt_ylabel":      "",
-    "opt_label_sz":    10,
-    "opt_show_grid":   True,
-    "opt_show_nums":   False,
-    "opt_data_lbl_sz": 7,
-    "opt_xtick_rot":   -1,
-    "opt_y_min":       "",
-    "opt_y_max":       "",
-    "opt_minimal":     False,
-    "opt_show_axes_y": True,
-    "opt_white_bg":    False,
-    "opt_dpi":         200,
-    "opt_fig_w":       11.0,
-    "opt_fig_h":       6.0,
+    # Testi
+    "opt_title":        "",
+    "opt_title_sz":     13,
+    "opt_title_bold":   True,
+    "opt_title_ital":   False,
+    "opt_xlabel":       "",
+    "opt_ylabel":       "",
+    "opt_label_sz":     10,
+    # Stile
+    "opt_palette_nm":   list(PALETTES.keys())[0],
+    "opt_show_leg":     True,
+    "opt_show_grid":    True,
+    "opt_show_nums":    False,
+    "opt_data_lbl_sz":  7,
+    "opt_minimal":      False,
+    "opt_show_axes_y":  True,
+    "opt_white_bg":     False,
+    # Assi base
+    "opt_xtick_rot":    -1,
+    "opt_y_min":        "",
+    "opt_y_max":        "",
+    # Scala
+    "opt_y_scale":      "Normale",
+    "opt_x_scale":      "Normale",
+    "opt_y_step":       "",
+    "opt_x_step":       "",
+    # Minor tick
+    "opt_y_minor":      False,
+    "opt_y_minor_ndiv": 5,
+    "opt_x_minor":      False,
+    "opt_x_minor_ndiv": 5,
+    # Griglia avanzata Y (major + minor)
+    "opt_gy_maj":       False,
+    "opt_gy_maj_sty":   "-- tratteggiata",
+    "opt_gy_maj_alp":   0.4,
+    "opt_gy_maj_lw":    0.8,
+    "opt_gy_min":       False,
+    "opt_gy_min_sty":   ":  punteggiata",
+    "opt_gy_min_alp":   0.25,
+    "opt_gy_min_lw":    0.5,
+    "opt_gy_min_ndiv":  5,
+    # Griglia avanzata X (major + minor)
+    "opt_gx_maj":       False,
+    "opt_gx_maj_sty":   "-- tratteggiata",
+    "opt_gx_maj_alp":   0.4,
+    "opt_gx_maj_lw":    0.8,
+    "opt_gx_min":       False,
+    "opt_gx_min_sty":   ":  punteggiata",
+    "opt_gx_min_alp":   0.25,
+    "opt_gx_min_lw":    0.5,
+    "opt_gx_min_ndiv":  5,
+    # Esportazione
+    "opt_dpi":          200,
+    "opt_fig_w":        11.0,
+    "opt_fig_h":        6.0,
 }
 for _k, _v in _OPT_DEFAULTS.items():
     if _k not in st.session_state:
@@ -981,15 +1113,43 @@ elif _sel == _TABS[2]:
         # Raccoglie le opzioni di stile dalla session_state (impostati in tab ⚙️)
         _so = st.session_state
         style_opts = {
-            "title_sz":    int(_so.opt_title_sz),
-            "title_bold":  bool(_so.opt_title_bold),
-            "title_ital":  bool(_so.opt_title_ital),
-            "label_sz":    int(_so.opt_label_sz),
-            "y_min":       str(_so.opt_y_min),
-            "y_max":       str(_so.opt_y_max),
-            "minimal":     bool(_so.opt_minimal),
-            "show_axes_y": bool(_so.opt_show_axes_y),
-            "white_bg":    bool(_so.opt_white_bg),
+            "title_sz":      int(_so.opt_title_sz),
+            "title_bold":    bool(_so.opt_title_bold),
+            "title_ital":    bool(_so.opt_title_ital),
+            "label_sz":      int(_so.opt_label_sz),
+            "y_min":         str(_so.opt_y_min),
+            "y_max":         str(_so.opt_y_max),
+            "minimal":       bool(_so.opt_minimal),
+            "show_axes_y":   bool(_so.opt_show_axes_y),
+            "white_bg":      bool(_so.opt_white_bg),
+        }
+        axis_opts = {
+            "y_scale":       str(_so.opt_y_scale),
+            "x_scale":       str(_so.opt_x_scale),
+            "y_step":        str(_so.opt_y_step),
+            "x_step":        str(_so.opt_x_step),
+            "y_minor":       bool(_so.opt_y_minor),
+            "y_minor_ndiv":  int(_so.opt_y_minor_ndiv),
+            "x_minor":       bool(_so.opt_x_minor),
+            "x_minor_ndiv":  int(_so.opt_x_minor_ndiv),
+            "gy_maj":        bool(_so.opt_gy_maj),
+            "gy_maj_sty":    str(_so.opt_gy_maj_sty),
+            "gy_maj_alp":    float(_so.opt_gy_maj_alp),
+            "gy_maj_lw":     float(_so.opt_gy_maj_lw),
+            "gy_min":        bool(_so.opt_gy_min),
+            "gy_min_sty":    str(_so.opt_gy_min_sty),
+            "gy_min_alp":    float(_so.opt_gy_min_alp),
+            "gy_min_lw":     float(_so.opt_gy_min_lw),
+            "gy_min_ndiv":   int(_so.opt_gy_min_ndiv),
+            "gx_maj":        bool(_so.opt_gx_maj),
+            "gx_maj_sty":    str(_so.opt_gx_maj_sty),
+            "gx_maj_alp":    float(_so.opt_gx_maj_alp),
+            "gx_maj_lw":     float(_so.opt_gx_maj_lw),
+            "gx_min":        bool(_so.opt_gx_min),
+            "gx_min_sty":    str(_so.opt_gx_min_sty),
+            "gx_min_alp":    float(_so.opt_gx_min_alp),
+            "gx_min_lw":     float(_so.opt_gx_min_lw),
+            "gx_min_ndiv":   int(_so.opt_gx_min_ndiv),
         }
 
         with right:
@@ -1223,6 +1383,7 @@ elif _sel == _TABS[2]:
                                 ax.boxplot(vals, patch_artist=True)
 
                         _apply_style(ax, title, xlabel, ylabel, show_leg, show_grid, opts=style_opts)
+                        _apply_axis_settings(ax, axis_opts)
 
                     fig.tight_layout(pad=1.5)
                     st.session_state.fig = fig
@@ -1311,16 +1472,115 @@ elif _sel == _TABS[3]:
 
     # ── 📐 Assi e scala ───────────────────────────────────────────────────────
     with st.expander("📐  Assi e scala", expanded=False):
-        ac1, ac2 = st.columns(2)
-        with ac1:
-            ss.opt_y_min = st.text_input("Y minimo (vuoto = auto)", value=ss.opt_y_min)
-        with ac2:
-            ss.opt_y_max = st.text_input("Y massimo (vuoto = auto)", value=ss.opt_y_max)
+        # Scala
+        _sc_keys = list(_SCALE_TYPES)
+        sca1, sca2 = st.columns(2)
+        with sca1:
+            _yi = _sc_keys.index(ss.opt_y_scale) if ss.opt_y_scale in _sc_keys else 0
+            ss.opt_y_scale = st.selectbox("Scala Asse Y", _sc_keys, index=_yi)
+        with sca2:
+            _xi = _sc_keys.index(ss.opt_x_scale) if ss.opt_x_scale in _sc_keys else 0
+            ss.opt_x_scale = st.selectbox("Scala Asse X", _sc_keys, index=_xi)
 
+        # Limiti e passo
+        lc1, lc2, lc3, lc4 = st.columns(4)
+        with lc1:
+            ss.opt_y_min  = st.text_input("Y min", value=ss.opt_y_min)
+        with lc2:
+            ss.opt_y_max  = st.text_input("Y max", value=ss.opt_y_max)
+        with lc3:
+            ss.opt_y_step = st.text_input("Y passo tick", value=ss.opt_y_step,
+                                           help="Lascia vuoto per automatico")
+        with lc4:
+            ss.opt_x_step = st.text_input("X passo tick", value=ss.opt_x_step,
+                                           help="Lascia vuoto per automatico")
+
+        # Minor tick
+        st.markdown("**Minor tick**")
+        mt1, mt2, mt3, mt4 = st.columns(4)
+        with mt1:
+            ss.opt_y_minor = st.checkbox("Minor tick Y", value=ss.opt_y_minor)
+        with mt2:
+            ss.opt_y_minor_ndiv = int(st.number_input("Subdiv Y", min_value=2, max_value=20,
+                                                        value=int(ss.opt_y_minor_ndiv), step=1))
+        with mt3:
+            ss.opt_x_minor = st.checkbox("Minor tick X", value=ss.opt_x_minor)
+        with mt4:
+            ss.opt_x_minor_ndiv = int(st.number_input("Subdiv X", min_value=2, max_value=20,
+                                                        value=int(ss.opt_x_minor_ndiv), step=1))
+
+        # Rotazione etichette X
         ss.opt_xtick_rot = int(st.slider(
             "Rotazione etichette X  (−1 = auto)",
             min_value=-1, max_value=90, value=int(ss.opt_xtick_rot), step=5,
         ))
+
+    # ── 🔲 Griglia avanzata ────────────────────────────────────────────────────
+    with st.expander("🔲  Griglia avanzata", expanded=False):
+        st.caption("Se abilitata, sovrascrive l'opzione 'Griglia' dello stile.")
+        _gs_opts = list(_GRID_STYLE_MAP.keys())
+
+        st.markdown("**Asse Y — major**")
+        gy1, gy2, gy3, gy4 = st.columns([1, 2, 1, 1])
+        with gy1:
+            ss.opt_gy_maj = st.checkbox("Attiva##gym", value=ss.opt_gy_maj)
+        with gy2:
+            _gi = _gs_opts.index(ss.opt_gy_maj_sty) if ss.opt_gy_maj_sty in _gs_opts else 1
+            ss.opt_gy_maj_sty = st.selectbox("Stile##gym", _gs_opts, index=_gi)
+        with gy3:
+            ss.opt_gy_maj_alp = float(st.number_input("Alpha##gym", 0.05, 1.0,
+                                                        value=float(ss.opt_gy_maj_alp), step=0.05))
+        with gy4:
+            ss.opt_gy_maj_lw  = float(st.number_input("Spess.##gym", 0.2, 3.0,
+                                                        value=float(ss.opt_gy_maj_lw), step=0.2))
+
+        st.markdown("**Asse Y — minor**")
+        gy5, gy6, gy7, gy8, gy9 = st.columns([1, 2, 1, 1, 1])
+        with gy5:
+            ss.opt_gy_min = st.checkbox("Attiva##gymi", value=ss.opt_gy_min)
+        with gy6:
+            _gi2 = _gs_opts.index(ss.opt_gy_min_sty) if ss.opt_gy_min_sty in _gs_opts else 2
+            ss.opt_gy_min_sty = st.selectbox("Stile##gymi", _gs_opts, index=_gi2)
+        with gy7:
+            ss.opt_gy_min_alp = float(st.number_input("Alpha##gymi", 0.05, 1.0,
+                                                        value=float(ss.opt_gy_min_alp), step=0.05))
+        with gy8:
+            ss.opt_gy_min_lw  = float(st.number_input("Spess.##gymi", 0.2, 3.0,
+                                                        value=float(ss.opt_gy_min_lw), step=0.2))
+        with gy9:
+            ss.opt_gy_min_ndiv = int(st.number_input("Subdiv##gymi", 2, 20,
+                                                       value=int(ss.opt_gy_min_ndiv), step=1))
+
+        st.markdown("**Asse X — major**")
+        gx1, gx2, gx3, gx4 = st.columns([1, 2, 1, 1])
+        with gx1:
+            ss.opt_gx_maj = st.checkbox("Attiva##gxm", value=ss.opt_gx_maj)
+        with gx2:
+            _gi3 = _gs_opts.index(ss.opt_gx_maj_sty) if ss.opt_gx_maj_sty in _gs_opts else 1
+            ss.opt_gx_maj_sty = st.selectbox("Stile##gxm", _gs_opts, index=_gi3)
+        with gx3:
+            ss.opt_gx_maj_alp = float(st.number_input("Alpha##gxm", 0.05, 1.0,
+                                                        value=float(ss.opt_gx_maj_alp), step=0.05))
+        with gx4:
+            ss.opt_gx_maj_lw  = float(st.number_input("Spess.##gxm", 0.2, 3.0,
+                                                        value=float(ss.opt_gx_maj_lw), step=0.2))
+
+        st.markdown("**Asse X — minor**")
+        gx5, gx6, gx7, gx8, gx9 = st.columns([1, 2, 1, 1, 1])
+        with gx5:
+            ss.opt_gx_min = st.checkbox("Attiva##gxmi", value=ss.opt_gx_min)
+        with gx6:
+            _gi4 = _gs_opts.index(ss.opt_gx_min_sty) if ss.opt_gx_min_sty in _gs_opts else 2
+            ss.opt_gx_min_sty = st.selectbox("Stile##gxmi", _gs_opts, index=_gi4)
+        with gx7:
+            ss.opt_gx_min_alp = float(st.number_input("Alpha##gxmi", 0.05, 1.0,
+                                                        value=float(ss.opt_gx_min_alp), step=0.05))
+        with gx8:
+            ss.opt_gx_min_lw  = float(st.number_input("Spess.##gxmi", 0.2, 3.0,
+                                                        value=float(ss.opt_gx_min_lw), step=0.2))
+        with gx9:
+            ss.opt_gx_min_ndiv = int(st.number_input("Subdiv##gxmi", 2, 20,
+                                                       value=int(ss.opt_gx_min_ndiv), step=1))
 
     # ── 🔤 Etichette dati ────────────────────────────────────────────────────
     with st.expander("🔤  Etichette dati (numeri su barre)", expanded=False):
