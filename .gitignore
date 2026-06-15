@@ -1,5 +1,5 @@
 # ── File solo per la versione locale (desktop) ────────────────────────────────
-requirements.txt
+requirements_desktop.txt
 GUI_mappe_excel_win.py
 GUI_mappe_excel_win_online.py
 GUI_mappe_excel_win.py.bak
