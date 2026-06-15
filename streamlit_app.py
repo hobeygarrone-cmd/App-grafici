@@ -360,7 +360,7 @@ def _apply_style(ax_, title, xlabel, ylabel, show_legend, show_grid, opts=None):
     if show_legend:
         handles, labs = ax_.get_legend_handles_labels()
         if handles:
-            ax_.legend(fontsize=8, framealpha=0.85)
+            ax_.legend(fontsize=o.get("legend_sz", 8), framealpha=0.85)
 
     # Limiti Y
     y_min_s = o.get("y_min", "")
@@ -402,20 +402,19 @@ _SCALE_TYPES = ["Normale", "Log10", "Log₂", "Sqrt"]
 
 
 def _apply_axis_settings(ax, opts):
-    """Applica scala, minor tick e griglia avanzata (portato dal desktop)."""
+    """Applica scala, minor tick, griglia avanzata e dimensioni font assi."""
     import matplotlib.ticker as mticker
-    from matplotlib.ticker import MultipleLocator, AutoMinorLocator
+    from matplotlib.ticker import MultipleLocator, AutoMinorLocator, LogLocator, NullFormatter
     from matplotlib.ticker import FixedLocator
 
     for axis_name in ("x", "y"):
         sc     = str(opts.get(f"{axis_name}_scale", "Normale"))
-        mn_s   = str(opts.get(f"{axis_name}_min", "")).strip()
-        mx_s   = str(opts.get(f"{axis_name}_max", "")).strip()
         step_s = str(opts.get(f"{axis_name}_step", "")).strip()
         set_scale = ax.set_xscale if axis_name == "x" else ax.set_yscale
         mpl_axis  = ax.xaxis     if axis_name == "x" else ax.yaxis
         set_lim   = ax.set_xlim  if axis_name == "x" else ax.set_ylim
-        # Salta assi categoriali (FixedLocator = bar chart con etichette)
+        is_log    = sc in ("Log10", "Log₂")
+        # Salta scala su assi categoriali (FixedLocator = barre con etichette)
         is_cat = isinstance(mpl_axis.get_major_locator(), FixedLocator)
         if not is_cat:
             try:
@@ -430,13 +429,13 @@ def _apply_axis_settings(ax, opts):
                     ))
             except Exception:
                 pass
-            # Scala log: limite inferiore deve essere > 0
-            if sc in ("Log10", "Log₂"):
+            # Scala log: assicura limite inferiore > 0 e formatter leggibile
+            if is_log:
                 lo, hi = (ax.get_xlim() if axis_name == "x" else ax.get_ylim())
                 if lo <= 0 < hi:
                     try:
                         dmin, _ = mpl_axis.get_data_interval()
-                        pos_lo = dmin if dmin > 0 else hi / 100
+                        pos_lo  = dmin if dmin > 0 else hi / 100
                     except Exception:
                         pos_lo = hi / 100
                     try:
@@ -448,15 +447,22 @@ def _apply_axis_settings(ax, opts):
                         lambda v, pos: f"{int(v):,}" if v >= 1 and v == int(v) else f"{v:g}"
                     )
                 )
-            if step_s:
+            # Passo tick personalizzato (non su log, che usa LogLocator)
+            if step_s and not is_log:
                 try:
                     mpl_axis.set_major_locator(MultipleLocator(float(step_s)))
                 except Exception:
                     pass
+            # Minor tick
             if opts.get(f"{axis_name}_minor", False):
                 try:
-                    ndiv = int(opts.get(f"{axis_name}_minor_ndiv", 5))
-                    mpl_axis.set_minor_locator(AutoMinorLocator(ndiv))
+                    if is_log:
+                        # Per scala log: minor tick tra le decade (2,3,...9)
+                        mpl_axis.set_minor_locator(LogLocator(subs=list(range(2, 10))))
+                        mpl_axis.set_minor_formatter(NullFormatter())
+                    else:
+                        ndiv = int(opts.get(f"{axis_name}_minor_ndiv", 5))
+                        mpl_axis.set_minor_locator(AutoMinorLocator(ndiv))
                 except Exception:
                     pass
 
@@ -464,16 +470,17 @@ def _apply_axis_settings(ax, opts):
     _has_adv_grid = any(opts.get(k, False) for k in
                         ("gx_maj", "gx_min", "gy_maj", "gy_min"))
     if _has_adv_grid:
-        ax.grid(False, which="both")   # azzera griglia precedente
+        # Azzera griglia precedente per tutti gli assi / livelli
+        ax.grid(False, which="both", axis="both")
 
-    for axis_name, pfx in [("x", "gx"), ("y", "gy")]:
-        mpl_axis = ax.xaxis if axis_name == "x" else ax.yaxis
+    for axis_name, pfx in [("y", "gy"), ("x", "gx")]:
         if opts.get(f"{pfx}_maj", False):
             sty = _GRID_STYLE_MAP.get(str(opts.get(f"{pfx}_maj_sty", "--")), "--")
             try:
                 alp = float(opts.get(f"{pfx}_maj_alp", 0.4))
                 lw  = float(opts.get(f"{pfx}_maj_lw",  0.8))
-                mpl_axis.grid(True, which="major", linestyle=sty, alpha=alp, linewidth=lw)
+                ax.grid(True, which="major", axis=axis_name,
+                        linestyle=sty, alpha=alp, linewidth=lw)
             except Exception:
                 pass
         if opts.get(f"{pfx}_min", False):
@@ -481,13 +488,34 @@ def _apply_axis_settings(ax, opts):
             try:
                 alp  = float(opts.get(f"{pfx}_min_alp", 0.25))
                 lw   = float(opts.get(f"{pfx}_min_lw",  0.5))
-                ndiv = int(opts.get(f"{pfx}_min_ndiv",  5))
-                mpl_axis.set_minor_locator(AutoMinorLocator(ndiv))
-                ax.tick_params(axis=axis_name, which="minor",
-                               grid_linestyle=sty, grid_alpha=alp, grid_linewidth=lw)
-                ax.grid(True, which="minor")
+                mpl_a = ax.xaxis if axis_name == "x" else ax.yaxis
+                # Minor locator (se non già impostato dalla sezione minor tick)
+                if not opts.get(f"{axis_name}_minor", False):
+                    ndiv = int(opts.get(f"{pfx}_min_ndiv", 5))
+                    sc_n = str(opts.get(f"{axis_name}_scale", "Normale"))
+                    if sc_n in ("Log10", "Log₂"):
+                        mpl_a.set_minor_locator(LogLocator(subs=list(range(2, 10))))
+                        mpl_a.set_minor_formatter(NullFormatter())
+                    else:
+                        mpl_a.set_minor_locator(AutoMinorLocator(ndiv))
+                ax.grid(True, which="minor", axis=axis_name,
+                        linestyle=sty, alpha=alp, linewidth=lw)
             except Exception:
                 pass
+
+    # ── Font size etichette tick e legenda ────────────────────────────────────
+    xtick_sz  = opts.get("xtick_sz")
+    ytick_sz  = opts.get("ytick_sz")
+    legend_sz = opts.get("legend_sz")
+    if xtick_sz:
+        ax.tick_params(axis="x", labelsize=int(xtick_sz))
+    if ytick_sz:
+        ax.tick_params(axis="y", labelsize=int(ytick_sz))
+    if legend_sz:
+        leg = ax.get_legend()
+        if leg:
+            for txt in leg.get_texts():
+                txt.set_fontsize(int(legend_sz))
 
 
 def _normalize_geo(series: pd.Series, name_up: dict) -> pd.Series:
@@ -826,6 +854,10 @@ _OPT_DEFAULTS = {
     "opt_minimal":      False,
     "opt_show_axes_y":  True,
     "opt_white_bg":     False,
+    # Font tick e legenda
+    "opt_xtick_sz":     8,
+    "opt_ytick_sz":     8,
+    "opt_legend_sz":    8,
     # Assi base
     "opt_xtick_rot":    -1,
     "opt_y_min":        "",
@@ -1122,6 +1154,7 @@ elif _sel == _TABS[2]:
             "minimal":       bool(_so.opt_minimal),
             "show_axes_y":   bool(_so.opt_show_axes_y),
             "white_bg":      bool(_so.opt_white_bg),
+            "legend_sz":     int(_so.opt_legend_sz),
         }
         axis_opts = {
             "y_scale":       str(_so.opt_y_scale),
@@ -1150,6 +1183,8 @@ elif _sel == _TABS[2]:
             "gx_min_alp":    float(_so.opt_gx_min_alp),
             "gx_min_lw":     float(_so.opt_gx_min_lw),
             "gx_min_ndiv":   int(_so.opt_gx_min_ndiv),
+            "xtick_sz":      int(_so.opt_xtick_sz),
+            "ytick_sz":      int(_so.opt_ytick_sz),
         }
 
         with right:
@@ -1467,8 +1502,19 @@ elif _sel == _TABS[3]:
         with xa2:
             ss.opt_ylabel = st.text_input("Etichetta Asse Y", value=ss.opt_ylabel)
 
-        ss.opt_label_sz = int(st.number_input("Dim. etichette assi", min_value=6, max_value=24,
-                                               value=int(ss.opt_label_sz), step=1))
+        fsz1, fsz2, fsz3, fsz4 = st.columns(4)
+        with fsz1:
+            ss.opt_label_sz  = int(st.number_input("Dim. etich. assi", min_value=6, max_value=24,
+                                                    value=int(ss.opt_label_sz), step=1))
+        with fsz2:
+            ss.opt_xtick_sz  = int(st.number_input("Dim. tick X", min_value=4, max_value=20,
+                                                    value=int(ss.opt_xtick_sz), step=1))
+        with fsz3:
+            ss.opt_ytick_sz  = int(st.number_input("Dim. tick Y", min_value=4, max_value=20,
+                                                    value=int(ss.opt_ytick_sz), step=1))
+        with fsz4:
+            ss.opt_legend_sz = int(st.number_input("Dim. legenda", min_value=4, max_value=20,
+                                                    value=int(ss.opt_legend_sz), step=1))
 
     # ── 📐 Assi e scala ───────────────────────────────────────────────────────
     with st.expander("📐  Assi e scala", expanded=False):
