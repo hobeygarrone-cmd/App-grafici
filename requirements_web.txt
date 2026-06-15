@@ -1,0 +1,17 @@
+# Dipendenze per Streamlit Cloud (NON include pacchetti desktop-only)
+# Su Streamlit Cloud rinomina questo file in requirements.txt
+
+# --- Core ---
+numpy
+pandas
+openpyxl
+
+# --- Web app ---
+streamlit
+
+# --- Grafici ---
+matplotlib
+
+# --- Mappe / Geo ---
+geopandas
+shapely

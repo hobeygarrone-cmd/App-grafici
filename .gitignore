@@ -1,0 +1,37 @@
+# ── File solo per la versione locale (desktop) ────────────────────────────────
+requirements.txt
+GUI_mappe_excel_win.py
+GUI_mappe_excel_win_online.py
+GUI_mappe_excel_win.py.bak
+LAUNCHER.bat
+PRIMO_AVVIO.bat
+assets/
+error.log
+migrate pyside6/
+.claude/
+
+# ── File troppo grandi per GitHub (>100 MB) ───────────────────────────────────
+# Usa prep_geo.py per generare i file CAP filtrati al loro posto
+xGUI/cap_ita.geojson
+
+# ── Cache e file temporanei ───────────────────────────────────────────────────
+xGUI/geocode_cache_torino.json
+xGUI/style_icons/
+xGUI/GUI_ISTRUZIONI.md
+
+# ── File dati ─────────────────────────────────────────────────────────────────
+*.xlsx
+*.xls
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+
+# ── Sistema operativo ─────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
