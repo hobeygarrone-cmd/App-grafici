@@ -65,30 +65,30 @@ _SDG_COLORS = [
     "#00689D","#19486A",
 ]
 
-# Palette istituzionali (liste di colori esadecimali)
+# Palette personalizzate (nomi anonimi basati sui colori dominanti)
 _BRAND_PALETTES = {
-    "CRT":     ["#312A74","#FDC400","#5C5499","#F0A800","#1E1A55","#FFD966","#7B73AA","#E8C000"],
-    "ISP":     ["#004258","#B10931","#326779","#D43060","#005A74","#E05070","#007A9A","#FF6080"],
-    "Cariplo": ["#002F6C","#E31937","#0057B8","#FF4D4D","#003F8A","#C0392B","#1565C0","#FF7043"],
-    "Carisbo": ["#1C1C1C","#D40000","#555555","#FF6666","#333333","#B30000","#888888","#FF9999"],
-    "BS2026":  ["#1E3264","#3D4FA0","#9089C0","#2A6B5A","#3B9878","#7BC5A0","#F0A020","#888FA0"],
-    "BS26-2":  ["#21345C","#5B8DC8","#3EA8A5","#D98A25","#8870B0","#89C0A5","#A89880","#C0CEDE"],
-    "BS26-3":  ["#1C2B5A","#3C68B5","#E8A020","#8890A0","#5878C8","#C47A10","#2A3870","#B0B8C8"],
-    "Default": ["#156082","#E97132","#196B24","#0F9ED5","#A02B93","#4EA72E","#467886","#96607D"],
-    "SDG":     _SDG_COLORS,
+    "Viola e Oro":       ["#312A74","#FDC400","#5C5499","#F0A800","#1E1A55","#FFD966","#7B73AA","#E8C000"],
+    "Petrolio e Rosso":  ["#004258","#B10931","#326779","#D43060","#005A74","#E05070","#007A9A","#FF6080"],
+    "Navy e Rosso 1":    ["#002F6C","#E31937","#0057B8","#FF4D4D","#003F8A","#C0392B","#1565C0","#FF7043"],
+    "Antracite e Rosso": ["#1C1C1C","#D40000","#555555","#FF6666","#333333","#B30000","#888888","#FF9999"],
+    "Navy e Teal":       ["#1E3264","#3D4FA0","#9089C0","#2A6B5A","#3B9878","#7BC5A0","#F0A020","#888FA0"],
+    "Navy e Ambra":      ["#21345C","#5B8DC8","#3EA8A5","#D98A25","#8870B0","#89C0A5","#A89880","#C0CEDE"],
+    "Navy e Oro":        ["#1C2B5A","#3C68B5","#E8A020","#8890A0","#5878C8","#C47A10","#2A3870","#B0B8C8"],
+    "Blu e Arancio":     ["#156082","#E97132","#196B24","#0F9ED5","#A02B93","#4EA72E","#467886","#96607D"],
+    "SDG":               _SDG_COLORS,
 }
 
 PALETTES = {
-    # ── Istituzionali ────────────────────────────────────────────────────────
-    "CRT":       "CRT",
-    "ISP":       "ISP",
-    "Cariplo":   "Cariplo",
-    "Carisbo":   "Carisbo",
-    "BS2026":    "BS2026",
-    "BS26-2":    "BS26-2",
-    "BS26-3":    "BS26-3",
-    "Default":   "Default",
-    "SDG":       "SDG",
+    # ── Personalizzate ───────────────────────────────────────────────────────
+    "Viola e Oro":       "Viola e Oro",
+    "Petrolio e Rosso":  "Petrolio e Rosso",
+    "Navy e Rosso 1":    "Navy e Rosso 1",
+    "Antracite e Rosso": "Antracite e Rosso",
+    "Navy e Teal":       "Navy e Teal",
+    "Navy e Ambra":      "Navy e Ambra",
+    "Navy e Oro":        "Navy e Oro",
+    "Blu e Arancio":     "Blu e Arancio",
+    "SDG":               "SDG",
     # ── Qualitative matplotlib ───────────────────────────────────────────────
     "Tab10":     "tab10",
     "Tab20":     "tab20",
@@ -310,8 +310,23 @@ def _colors(n, palette_name):
     brand = _BRAND_PALETTES.get(palette_name)
     if brand:
         return [brand[i % len(brand)] for i in range(n)]
-    cmap = plt.get_cmap(palette_name) if palette_name else plt.get_cmap("tab10")
+    try:
+        cmap = plt.get_cmap(palette_name) if palette_name else plt.get_cmap("tab10")
+    except Exception:
+        cmap = plt.get_cmap("tab10")
     return [cmap(i / max(n - 1, 1)) for i in range(n)]
+
+
+def _get_cmap(palette_name, fallback="Blues"):
+    """Restituisce un matplotlib colormap; per palette brand usa ListedColormap."""
+    brand = _BRAND_PALETTES.get(palette_name)
+    if brand:
+        from matplotlib.colors import ListedColormap
+        return ListedColormap(brand)
+    try:
+        return plt.get_cmap(palette_name) if palette_name else plt.get_cmap(fallback)
+    except Exception:
+        return plt.get_cmap(fallback)
 
 
 def _cat_colors(categories, palette_name):
@@ -382,20 +397,20 @@ def _plot_choropleth(fig, ax, df_filt, geo_col, val_col, gdf, palette, title):
 
     merged = gdf.merge(agg, on="GEO_NAME", how="left")
 
-    cmap_name = palette or "Blues"
+    cmap_obj  = _get_cmap(palette, fallback="Blues")
     vmin = agg["value"].min()
     vmax = agg["value"].max()
     if pd.isna(vmin) or pd.isna(vmax) or vmin == vmax:
         vmin, vmax = 0, 1
 
     merged.plot(
-        column="value", ax=ax, cmap=cmap_name,
+        column="value", ax=ax, cmap=cmap_obj,
         missing_kwds={"color": "#e4e4e4", "label": "Nessun dato"},
         legend=False, edgecolor="#aaaaaa", linewidth=0.5,
         vmin=vmin, vmax=vmax,
     )
     norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
-    sm   = mcm.ScalarMappable(cmap=plt.get_cmap(cmap_name), norm=norm)
+    sm   = mcm.ScalarMappable(cmap=cmap_obj, norm=norm)
     sm.set_array([])
     fig.colorbar(sm, ax=ax, shrink=0.7, pad=0.02)
 
@@ -442,7 +457,7 @@ def _plot_bubble_map(fig, ax, df_filt, geo_col, val_col, grp_col, gdf, palette, 
                        for g in groups]
             ax.legend(handles=handles, fontsize=7, framealpha=0.9)
     else:
-        base_color = plt.get_cmap(palette or "tab10")(0)
+        base_color = _get_cmap(palette, fallback="tab10")(0)
         for _, row in agg.iterrows():
             geo = row["_GEO"]
             if geo not in centroids.index:
@@ -614,12 +629,12 @@ def _plot_pin_map(fig, ax, df_filt, geo_col, val_col, grp_col, gdf, palette, tit
             ax.legend(handles=handles, fontsize=7, framealpha=0.9)
     else:
         # Colora per valore se disponibile, altrimenti colore fisso
-        base_color = plt.get_cmap(palette or "tab10")(0.2)
+        base_color = _get_cmap(palette, fallback="tab10")(0.2)
         if val_col and val_col in df2.columns:
             agg = df2.groupby("_GEO")[val_col].sum().reset_index()
             vvals = pd.to_numeric(agg[val_col], errors="coerce")
             vmin, vmax = vvals.min(), vvals.max()
-            cmap = plt.get_cmap(palette or "YlOrRd")
+            cmap = _get_cmap(palette, fallback="YlOrRd")
             norm = mcolors.Normalize(vmin=vmin, vmax=vmax if vmax != vmin else vmin + 1)
             for _, row in agg.iterrows():
                 geo = row["_GEO"]
@@ -652,7 +667,25 @@ def _plot_pin_map(fig, ax, df_filt, geo_col, val_col, grp_col, gdf, palette, tit
 if "active_tab" not in st.session_state:
     st.session_state.active_tab = 0
 
-_TABS = ["📁  Dati", "🗂  Variabili", "📊  Grafico"]
+# Valori di default per le opzioni di personalizzazione
+_OPT_DEFAULTS = {
+    "opt_title":      "",
+    "opt_palette_nm": list(PALETTES.keys())[0],
+    "opt_show_leg":   True,
+    "opt_xlabel":     "",
+    "opt_ylabel":     "",
+    "opt_show_grid":  True,
+    "opt_show_nums":  False,
+    "opt_xtick_rot":  -1,
+    "opt_dpi":        200,
+    "opt_fig_w":      11.0,
+    "opt_fig_h":      6.0,
+}
+for _k, _v in _OPT_DEFAULTS.items():
+    if _k not in st.session_state:
+        st.session_state[_k] = _v
+
+_TABS = ["📁  Dati", "🗂  Variabili", "📊  Grafico", "⚙️  Personalizzazione"]
 _sel = st.radio(
     "", _TABS, horizontal=True,
     index=st.session_state.active_tab,
@@ -839,25 +872,21 @@ elif _sel == _TABS[2]:
                 y_col   = st.selectbox("Asse Y (dipend / valori)", dipend)
                 grp_col = st.selectbox("Raggruppa / Colore (opzionale)", all_col)
 
-            # ── Personalizzazione ─────────────────────────────────────────────
-            with st.expander("🎨  Personalizzazione", expanded=True):
-                title      = st.text_input("Titolo grafico")
-                palette_nm = st.selectbox("Palette colori", list(PALETTES.keys()))
-                palette    = PALETTES[palette_nm]
-                show_leg   = st.checkbox("Mostra legenda", value=True)
-                if not is_map:
-                    xlabel    = st.text_input("Etichetta Asse X")
-                    ylabel    = st.text_input("Etichetta Asse Y")
-                    show_grid = st.checkbox("Griglia", value=True)
-                    show_nums = st.checkbox("Numeri sulle barre", value=False)
-                    xtick_rot = st.slider(
-                        "Rotazione etichette X  (−1 = auto)",
-                        min_value=-1, max_value=90, value=-1, step=5,
-                    )
-                else:
-                    xlabel = ylabel = ""
-                    show_grid = show_nums = False
-                    xtick_rot = -1
+            # ── Personalizzazione (legge da session_state, si imposta nella tab ⚙️) ──
+            title      = st.session_state.opt_title
+            palette_nm = st.session_state.opt_palette_nm
+            palette    = PALETTES.get(palette_nm, list(PALETTES.values())[0])
+            show_leg   = st.session_state.opt_show_leg
+            if not is_map:
+                xlabel    = st.session_state.opt_xlabel
+                ylabel    = st.session_state.opt_ylabel
+                show_grid = st.session_state.opt_show_grid
+                show_nums = st.session_state.opt_show_nums
+                xtick_rot = st.session_state.opt_xtick_rot
+            else:
+                xlabel = ylabel = ""
+                show_grid = show_nums = False
+                xtick_rot = -1
 
             # ── Filtri ────────────────────────────────────────────────────────
             with st.expander("🔍  Filtri"):
@@ -901,12 +930,13 @@ elif _sel == _TABS[2]:
             if gen:
                 try:
                     # Dimensione figura
-                    figsize = (11, 8) if is_map else (11, 6)
-                    fig, ax = plt.subplots(figsize=figsize)
+                    _fw = float(st.session_state.opt_fig_w)
+                    _fh = float(st.session_state.opt_fig_h)
+                    fig, ax = plt.subplots(figsize=(_fw, _fh))
 
                     if not is_map and palette:
                         plt.rcParams["axes.prop_cycle"] = plt.cycler(
-                            color=[plt.get_cmap(palette)(i / 9) for i in range(10)]
+                            color=_colors(10, palette)
                         )
 
                     # ── MAPPE ─────────────────────────────────────────────────
@@ -1055,7 +1085,7 @@ elif _sel == _TABS[2]:
                                 ax.scatter(pd.to_numeric(df_filt[x], errors="coerce"),
                                            pd.to_numeric(df_filt[y], errors="coerce"),
                                            alpha=0.7, s=30,
-                                           c=[plt.get_cmap(palette or "tab10")(0)])
+                                           c=[_get_cmap(palette, fallback="tab10")(0)])
 
                         elif chart_key == "histogram":
                             col_ = y or x
@@ -1071,7 +1101,7 @@ elif _sel == _TABS[2]:
                                     ax.hist(vals, bins=20, alpha=0.55, label=str(grp), color=col_c)
                             else:
                                 vals = pd.to_numeric(df_filt[col_], errors="coerce").dropna()
-                                ax.hist(vals, bins=20, color=plt.get_cmap(palette or "tab10")(0))
+                                ax.hist(vals, bins=20, color=_get_cmap(palette, fallback="tab10")(0))
 
                         elif chart_key == "pie":
                             if y and x:
@@ -1102,7 +1132,7 @@ elif _sel == _TABS[2]:
                                 piv = df_filt.pivot_table(index=x, columns=y, values=val_col, aggfunc="mean")
                             else:
                                 piv = df_filt.pivot_table(index=x, columns=y, aggfunc="size", fill_value=0)
-                            im = ax.imshow(piv.values, aspect="auto", cmap=palette or "YlOrRd")
+                            im = ax.imshow(piv.values, aspect="auto", cmap=_get_cmap(palette, fallback="YlOrRd"))
                             ax.set_xticks(range(len(piv.columns)))
                             ax.set_xticklabels(piv.columns, rotation=45, ha="right", fontsize=7)
                             ax.set_yticks(range(len(piv.index)))
@@ -1140,7 +1170,8 @@ elif _sel == _TABS[2]:
                 st.pyplot(st.session_state.fig, use_container_width=True)
 
                 buf = io.BytesIO()
-                st.session_state.fig.savefig(buf, format="png", dpi=200, bbox_inches="tight")
+                dpi_out = int(st.session_state.opt_dpi)
+                st.session_state.fig.savefig(buf, format="png", dpi=dpi_out, bbox_inches="tight")
                 buf.seek(0)
                 st.download_button(
                     label="💾  Scarica PNG",
@@ -1151,3 +1182,57 @@ elif _sel == _TABS[2]:
                 )
             else:
                 st.info("Imposta le opzioni a sinistra e clicca **▶ Genera grafico**.")
+
+        st.divider()
+        if st.button("⚙️  Vai alle Impostazioni →", use_container_width=True):
+            st.session_state.active_tab = 3
+            st.rerun()
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PAGINA 4 — PERSONALIZZAZIONE
+# ══════════════════════════════════════════════════════════════════════════════
+elif _sel == _TABS[3]:
+    st.subheader("⚙️  Impostazioni grafico")
+    st.caption("Le modifiche vengono applicate automaticamente al prossimo grafico generato.")
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.markdown("**Testo**")
+        st.text_input("Titolo grafico", key="opt_title")
+        st.text_input("Etichetta Asse X", key="opt_xlabel")
+        st.text_input("Etichetta Asse Y", key="opt_ylabel")
+
+    with col_b:
+        st.markdown("**Stile**")
+        st.selectbox("Palette colori", list(PALETTES.keys()), key="opt_palette_nm")
+        st.checkbox("Mostra legenda", key="opt_show_leg")
+        st.checkbox("Griglia", key="opt_show_grid")
+        st.checkbox("Numeri sulle barre", key="opt_show_nums")
+
+    st.markdown("**Assi**")
+    st.slider(
+        "Rotazione etichette X  (−1 = auto)",
+        min_value=-1, max_value=90, step=5,
+        key="opt_xtick_rot",
+    )
+
+    st.markdown("**Esportazione**")
+    ec1, ec2, ec3 = st.columns(3)
+    with ec1:
+        st.number_input("Larghezza figura (pollici)", min_value=4.0, max_value=24.0, step=0.5, key="opt_fig_w")
+    with ec2:
+        st.number_input("Altezza figura (pollici)", min_value=3.0, max_value=20.0, step=0.5, key="opt_fig_h")
+    with ec3:
+        st.number_input("DPI download PNG", min_value=72, max_value=600, step=50, key="opt_dpi")
+
+    st.divider()
+    rc1, rc2 = st.columns(2)
+    with rc1:
+        if st.button("🔄  Ripristina default", use_container_width=True):
+            for _k, _v in _OPT_DEFAULTS.items():
+                st.session_state[_k] = _v
+            st.rerun()
+    with rc2:
+        if st.button("📊  Vai al Grafico →", use_container_width=True):
+            st.session_state.active_tab = 2
+            st.rerun()
