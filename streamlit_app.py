@@ -335,19 +335,61 @@ def _cat_colors(categories, palette_name):
     return dict(zip(cats, cols))
 
 
-def _apply_style(ax_, title, xlabel, ylabel, show_legend, show_grid, fontsize_title=13):
+def _apply_style(ax_, title, xlabel, ylabel, show_legend, show_grid, opts=None):
+    o = opts or {}
+    title_sz   = o.get("title_sz", 13)
+    title_bold = o.get("title_bold", True)
+    title_ital = o.get("title_ital", False)
+    label_sz   = o.get("label_sz", 10)
+    minimal    = o.get("minimal", False)
+
     if title:
-        ax_.set_title(title, fontsize=fontsize_title, fontweight="bold", pad=10)
+        ax_.set_title(
+            title,
+            fontsize=title_sz,
+            fontweight="bold" if title_bold else "normal",
+            fontstyle="italic" if title_ital else "normal",
+            pad=10,
+        )
     if xlabel:
-        ax_.set_xlabel(xlabel, fontsize=10)
+        ax_.set_xlabel(xlabel, fontsize=label_sz)
     if ylabel:
-        ax_.set_ylabel(ylabel, fontsize=10)
+        ax_.set_ylabel(ylabel, fontsize=label_sz)
     if show_grid:
         ax_.grid(True, alpha=0.3, linestyle="--", axis="y")
     if show_legend:
         handles, labs = ax_.get_legend_handles_labels()
         if handles:
             ax_.legend(fontsize=8, framealpha=0.85)
+
+    # Limiti Y
+    y_min_s = o.get("y_min", "")
+    y_max_s = o.get("y_max", "")
+    if y_min_s or y_max_s:
+        cur_lo, cur_hi = ax_.get_ylim()
+        try:
+            ax_.set_ylim(
+                float(y_min_s) if y_min_s else cur_lo,
+                float(y_max_s) if y_max_s else cur_hi,
+            )
+        except ValueError:
+            pass
+
+    # Stile minimal: rimuove spine superiore e destra
+    if minimal:
+        ax_.spines["top"].set_visible(False)
+        ax_.spines["right"].set_visible(False)
+
+    # Mostra / nascondi asse Y
+    if not o.get("show_axes_y", True):
+        ax_.yaxis.set_visible(False)
+        ax_.spines["left"].set_visible(False)
+
+    # Sfondo bianco
+    if o.get("white_bg", False):
+        ax_.set_facecolor("white")
+        if ax_.get_figure():
+            ax_.get_figure().patch.set_facecolor("white")
 
 
 def _normalize_geo(series: pd.Series, name_up: dict) -> pd.Series:
@@ -669,17 +711,27 @@ if "active_tab" not in st.session_state:
 
 # Valori di default per le opzioni di personalizzazione
 _OPT_DEFAULTS = {
-    "opt_title":      "",
-    "opt_palette_nm": list(PALETTES.keys())[0],
-    "opt_show_leg":   True,
-    "opt_xlabel":     "",
-    "opt_ylabel":     "",
-    "opt_show_grid":  True,
-    "opt_show_nums":  False,
-    "opt_xtick_rot":  -1,
-    "opt_dpi":        200,
-    "opt_fig_w":      11.0,
-    "opt_fig_h":      6.0,
+    "opt_title":       "",
+    "opt_title_sz":    13,
+    "opt_title_bold":  True,
+    "opt_title_ital":  False,
+    "opt_palette_nm":  list(PALETTES.keys())[0],
+    "opt_show_leg":    True,
+    "opt_xlabel":      "",
+    "opt_ylabel":      "",
+    "opt_label_sz":    10,
+    "opt_show_grid":   True,
+    "opt_show_nums":   False,
+    "opt_data_lbl_sz": 7,
+    "opt_xtick_rot":   -1,
+    "opt_y_min":       "",
+    "opt_y_max":       "",
+    "opt_minimal":     False,
+    "opt_show_axes_y": True,
+    "opt_white_bg":    False,
+    "opt_dpi":         200,
+    "opt_fig_w":       11.0,
+    "opt_fig_h":       6.0,
 }
 for _k, _v in _OPT_DEFAULTS.items():
     if _k not in st.session_state:
@@ -926,6 +978,20 @@ elif _sel == _TABS[2]:
             gen = st.button("▶  Genera grafico", type="primary", use_container_width=True)
 
         # ── Area grafico ──────────────────────────────────────────────────────
+        # Raccoglie le opzioni di stile dalla session_state (impostati in tab ⚙️)
+        _so = st.session_state
+        style_opts = {
+            "title_sz":    int(_so.opt_title_sz),
+            "title_bold":  bool(_so.opt_title_bold),
+            "title_ital":  bool(_so.opt_title_ital),
+            "label_sz":    int(_so.opt_label_sz),
+            "y_min":       str(_so.opt_y_min),
+            "y_max":       str(_so.opt_y_max),
+            "minimal":     bool(_so.opt_minimal),
+            "show_axes_y": bool(_so.opt_show_axes_y),
+            "white_bg":    bool(_so.opt_white_bg),
+        }
+
         with right:
             if gen:
                 try:
@@ -992,7 +1058,7 @@ elif _sel == _TABS[2]:
                                 _smart_labels(ax, pivot.index, xtick_rot)
                                 if show_nums:
                                     for container in ax.containers:
-                                        ax.bar_label(container, fmt="%.4g", fontsize=7, padding=2)
+                                        ax.bar_label(container, fmt="%.4g", fontsize=int(_so.opt_data_lbl_sz), padding=2)
                             elif x and y:
                                 agg    = _agg(df_filt, x, y)
                                 vals   = pd.to_numeric(agg[y], errors="coerce").fillna(0)
@@ -1001,7 +1067,7 @@ elif _sel == _TABS[2]:
                                 ax.set_xticks(range(len(agg)))
                                 _smart_labels(ax, agg[x].astype(str), xtick_rot)
                                 if show_nums:
-                                    ax.bar_label(ax.containers[0], fmt="%.4g", fontsize=7, padding=2)
+                                    ax.bar_label(ax.containers[0], fmt="%.4g", fontsize=int(_so.opt_data_lbl_sz), padding=2)
                             elif x:
                                 vc     = df_filt[x].value_counts()
                                 colors = _colors(len(vc), palette)
@@ -1009,7 +1075,7 @@ elif _sel == _TABS[2]:
                                 ax.set_xticks(range(len(vc)))
                                 _smart_labels(ax, vc.index.astype(str), xtick_rot)
                                 if show_nums:
-                                    ax.bar_label(ax.containers[0], fmt="%d", fontsize=7, padding=2)
+                                    ax.bar_label(ax.containers[0], fmt="%d", fontsize=int(_so.opt_data_lbl_sz), padding=2)
                             else:
                                 raise ValueError("Seleziona almeno Asse X.")
 
@@ -1156,7 +1222,7 @@ elif _sel == _TABS[2]:
                                 vals = pd.to_numeric(df_filt[y], errors="coerce").dropna()
                                 ax.boxplot(vals, patch_artist=True)
 
-                        _apply_style(ax, title, xlabel, ylabel, show_leg, show_grid)
+                        _apply_style(ax, title, xlabel, ylabel, show_leg, show_grid, opts=style_opts)
 
                     fig.tight_layout(pad=1.5)
                     st.session_state.fig = fig
@@ -1190,40 +1256,91 @@ elif _sel == _TABS[2]:
 
 # ══════════════════════════════════════════════════════════════════════════════
 # PAGINA 4 — PERSONALIZZAZIONE
+# Usa value= + writeback immediato (NO key=) per evitare che Streamlit
+# cancelli i valori quando si torna su un'altra tab.
 # ══════════════════════════════════════════════════════════════════════════════
 elif _sel == _TABS[3]:
-    st.subheader("⚙️  Impostazioni grafico")
-    st.caption("Le modifiche vengono applicate automaticamente al prossimo grafico generato.")
+    ss = st.session_state
+    st.subheader("⚙️  Personalizzazione grafico")
+    st.caption("Le impostazioni si applicano al prossimo **▶ Genera grafico**.")
 
-    col_a, col_b = st.columns(2)
-    with col_a:
-        st.markdown("**Testo**")
-        st.text_input("Titolo grafico", key="opt_title")
-        st.text_input("Etichetta Asse X", key="opt_xlabel")
-        st.text_input("Etichetta Asse Y", key="opt_ylabel")
+    # ── 🎨 Stile ──────────────────────────────────────────────────────────────
+    with st.expander("🎨  Stile e colori", expanded=True):
+        _pal_keys = list(PALETTES.keys())
+        _pal_idx  = _pal_keys.index(ss.opt_palette_nm) if ss.opt_palette_nm in _pal_keys else 0
+        ss.opt_palette_nm = st.selectbox("Palette colori", _pal_keys, index=_pal_idx)
 
-    with col_b:
-        st.markdown("**Stile**")
-        st.selectbox("Palette colori", list(PALETTES.keys()), key="opt_palette_nm")
-        st.checkbox("Mostra legenda", key="opt_show_leg")
-        st.checkbox("Griglia", key="opt_show_grid")
-        st.checkbox("Numeri sulle barre", key="opt_show_nums")
+        sc1, sc2, sc3 = st.columns(3)
+        with sc1:
+            ss.opt_show_leg    = st.checkbox("Mostra legenda",        value=ss.opt_show_leg)
+        with sc2:
+            ss.opt_show_grid   = st.checkbox("Griglia",               value=ss.opt_show_grid)
+        with sc3:
+            ss.opt_show_nums   = st.checkbox("Numeri sulle barre",    value=ss.opt_show_nums)
 
-    st.markdown("**Assi**")
-    st.slider(
-        "Rotazione etichette X  (−1 = auto)",
-        min_value=-1, max_value=90, step=5,
-        key="opt_xtick_rot",
-    )
+        sc4, sc5, sc6 = st.columns(3)
+        with sc4:
+            ss.opt_minimal     = st.checkbox("Stile minimal",         value=ss.opt_minimal,
+                                             help="Rimuove le spine superiore e destra del grafico")
+        with sc5:
+            ss.opt_show_axes_y = st.checkbox("Mostra asse Y",         value=ss.opt_show_axes_y)
+        with sc6:
+            ss.opt_white_bg    = st.checkbox("Sfondo bianco",         value=ss.opt_white_bg)
 
-    st.markdown("**Esportazione**")
-    ec1, ec2, ec3 = st.columns(3)
-    with ec1:
-        st.number_input("Larghezza figura (pollici)", min_value=4.0, max_value=24.0, step=0.5, key="opt_fig_w")
-    with ec2:
-        st.number_input("Altezza figura (pollici)", min_value=3.0, max_value=20.0, step=0.5, key="opt_fig_h")
-    with ec3:
-        st.number_input("DPI download PNG", min_value=72, max_value=600, step=50, key="opt_dpi")
+    # ── 📝 Testi ──────────────────────────────────────────────────────────────
+    with st.expander("📝  Titolo ed etichette assi", expanded=True):
+        ss.opt_title = st.text_input("Titolo grafico", value=ss.opt_title)
+        tc1, tc2, tc3 = st.columns([2, 1, 1])
+        with tc1:
+            ss.opt_title_sz   = int(st.number_input("Dim. titolo", min_value=6, max_value=36,
+                                                     value=int(ss.opt_title_sz), step=1))
+        with tc2:
+            ss.opt_title_bold = st.checkbox("Grassetto", value=ss.opt_title_bold, key="_tb")
+        with tc3:
+            ss.opt_title_ital = st.checkbox("Corsivo",   value=ss.opt_title_ital, key="_ti")
+
+        st.markdown("---")
+        xa1, xa2 = st.columns(2)
+        with xa1:
+            ss.opt_xlabel = st.text_input("Etichetta Asse X", value=ss.opt_xlabel)
+        with xa2:
+            ss.opt_ylabel = st.text_input("Etichetta Asse Y", value=ss.opt_ylabel)
+
+        ss.opt_label_sz = int(st.number_input("Dim. etichette assi", min_value=6, max_value=24,
+                                               value=int(ss.opt_label_sz), step=1))
+
+    # ── 📐 Assi e scala ───────────────────────────────────────────────────────
+    with st.expander("📐  Assi e scala", expanded=False):
+        ac1, ac2 = st.columns(2)
+        with ac1:
+            ss.opt_y_min = st.text_input("Y minimo (vuoto = auto)", value=ss.opt_y_min)
+        with ac2:
+            ss.opt_y_max = st.text_input("Y massimo (vuoto = auto)", value=ss.opt_y_max)
+
+        ss.opt_xtick_rot = int(st.slider(
+            "Rotazione etichette X  (−1 = auto)",
+            min_value=-1, max_value=90, value=int(ss.opt_xtick_rot), step=5,
+        ))
+
+    # ── 🔤 Etichette dati ────────────────────────────────────────────────────
+    with st.expander("🔤  Etichette dati (numeri su barre)", expanded=False):
+        ss.opt_data_lbl_sz = int(st.number_input(
+            "Grandezza font etichette", min_value=4, max_value=20,
+            value=int(ss.opt_data_lbl_sz), step=1,
+        ))
+
+    # ── 💾 Esportazione ───────────────────────────────────────────────────────
+    with st.expander("💾  Esportazione PNG", expanded=False):
+        ec1, ec2, ec3 = st.columns(3)
+        with ec1:
+            ss.opt_fig_w = float(st.number_input("Larghezza (pollici)", min_value=4.0,
+                                                   max_value=24.0, value=float(ss.opt_fig_w), step=0.5))
+        with ec2:
+            ss.opt_fig_h = float(st.number_input("Altezza (pollici)", min_value=3.0,
+                                                   max_value=20.0, value=float(ss.opt_fig_h), step=0.5))
+        with ec3:
+            ss.opt_dpi   = int(st.number_input("DPI", min_value=72, max_value=600,
+                                                value=int(ss.opt_dpi), step=50))
 
     st.divider()
     rc1, rc2 = st.columns(2)
