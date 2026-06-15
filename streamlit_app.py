@@ -606,14 +606,25 @@ def _plot_pin_map(fig, ax, df_filt, geo_col, val_col, grp_col, gdf, palette, tit
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB LAYOUT
+# NAVIGAZIONE  (radio orizzontale — permette st.rerun() per cambiare pagina)
 # ══════════════════════════════════════════════════════════════════════════════
-tab1, tab2, tab3 = st.tabs(["📁  Dati", "🗂  Variabili", "📊  Grafico"])
+if "active_tab" not in st.session_state:
+    st.session_state.active_tab = 0
+
+_TABS = ["📁  Dati", "🗂  Variabili", "📊  Grafico"]
+_sel = st.radio(
+    "", _TABS, horizontal=True,
+    index=st.session_state.active_tab,
+    label_visibility="collapsed",
+)
+st.session_state.active_tab = _TABS.index(_sel)
+st.divider()
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 1 — DATI
+# PAGINA 1 — DATI
 # ══════════════════════════════════════════════════════════════════════════════
-with tab1:
+if _sel == _TABS[0]:
+
     st.subheader("Carica file dati")
     uploaded = st.file_uploader(
         "Trascina qui il file oppure clicca per cercarlo",
@@ -645,14 +656,18 @@ with tab1:
 
     if st.session_state.df is not None:
         st.dataframe(st.session_state.df.head(200), use_container_width=True)
+        st.divider()
+        if st.button("🗂  Vai alle Variabili →", use_container_width=True):
+            st.session_state.active_tab = 1
+            st.rerun()
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 2 — VARIABILI
+# PAGINA 2 — VARIABILI
 # ══════════════════════════════════════════════════════════════════════════════
-with tab2:
+elif _sel == _TABS[1]:
     df = st.session_state.df
     if df is None:
-        st.info("Carica prima un file nel tab Dati.")
+        st.info("Carica prima un file nella sezione Dati.")
     else:
         st.subheader("Ruolo di ogni colonna")
         st.caption(
@@ -663,9 +678,33 @@ with tab2:
 
         roles        = st.session_state.col_roles.copy()
         ROLE_OPTIONS = ["indip", "dipend", "ignora"]
-        N_COLS       = 4
-        col_list     = list(df.columns)
 
+        # ── Azioni rapide ──────────────────────────────────────────────────────
+        ca, cb, cc_ = st.columns([1, 2, 1])
+        with ca:
+            if st.button("Auto-rileva", use_container_width=True,
+                         help="Assegna 'dipend' alle colonne numeriche, 'indip' alle altre"):
+                for col in df.columns:
+                    roles[col] = "dipend" if _is_num(df[col]) else "indip"
+                st.session_state.col_roles = roles
+                st.rerun()
+        with cb:
+            bulk = st.selectbox(
+                "Assegna a tutti:", ["", "indip", "dipend", "ignora"],
+                key="bulk_role", label_visibility="collapsed",
+            )
+        with cc_:
+            if st.button("Applica", use_container_width=True) and bulk:
+                for col in df.columns:
+                    roles[col] = bulk
+                st.session_state.col_roles = roles
+                st.rerun()
+
+        st.divider()
+
+        # ── Selettori per colonna ──────────────────────────────────────────────
+        N_COLS   = 4
+        col_list = list(df.columns)
         for row_start in range(0, len(col_list), N_COLS):
             row_widgets = st.columns(N_COLS)
             for j, col_name in enumerate(col_list[row_start : row_start + N_COLS]):
@@ -675,7 +714,7 @@ with tab2:
                     tipo     = "numerico" if _is_num(df[col_name]) else "testo"
                     new_role = st.selectbox(
                         col_name, ROLE_OPTIONS, index=idx,
-                        key=f"role_{col_name}", help=f"Tipo dato: {tipo}",
+                        key=f"role_{col_name}", help=f"Tipo: {tipo}",
                     )
                     roles[col_name] = new_role
 
@@ -684,16 +723,21 @@ with tab2:
         show_cols = [c for c, r in roles.items() if r != "ignora"]
         if show_cols:
             st.divider()
-            st.subheader("Anteprima dati (modificabile con doppio clic)")
+            st.subheader("Anteprima dati")
             st.data_editor(df[show_cols].head(300), use_container_width=True, key="preview_editor")
 
+        st.divider()
+        if st.button("📊  Vai al Grafico →", use_container_width=True):
+            st.session_state.active_tab = 2
+            st.rerun()
+
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 3 — GRAFICO
+# PAGINA 3 — GRAFICO
 # ══════════════════════════════════════════════════════════════════════════════
-with tab3:
+elif _sel == _TABS[2]:
     df = st.session_state.df
     if df is None:
-        st.info("Carica prima un file nel tab Dati.")
+        st.info("Carica prima un file nella sezione Dati.")
     else:
         roles   = st.session_state.col_roles
         indip   = [""] + [c for c, r in roles.items() if r == "indip"]
@@ -755,60 +799,59 @@ with tab3:
                 grp_col = st.selectbox("Raggruppa / Colore (opzionale)", all_col)
 
             # ── Personalizzazione ─────────────────────────────────────────────
-            st.subheader("Personalizzazione")
-            title      = st.text_input("Titolo grafico")
-            palette_nm = st.selectbox("Palette colori", list(PALETTES.keys()))
-            palette    = PALETTES[palette_nm]
-            show_leg   = st.checkbox("Mostra legenda", value=True)
-            if not is_map:
-                xlabel    = st.text_input("Etichetta Asse X")
-                ylabel    = st.text_input("Etichetta Asse Y")
-                show_grid = st.checkbox("Griglia", value=True)
-                show_nums = st.checkbox("Numeri sulle barre", value=False)
-                xtick_rot = st.slider(
-                    "Rotazione etichette Asse X (−1 = automatico)",
-                    min_value=-1, max_value=90, value=-1, step=5,
-                    help="−1 usa la rotazione automatica; 0 = orizzontale, 45 o 70 = inclinato",
-                )
-            else:
-                xlabel = ylabel = ""
-                show_grid = show_nums = False
-                xtick_rot = -1
+            with st.expander("🎨  Personalizzazione", expanded=True):
+                title      = st.text_input("Titolo grafico")
+                palette_nm = st.selectbox("Palette colori", list(PALETTES.keys()))
+                palette    = PALETTES[palette_nm]
+                show_leg   = st.checkbox("Mostra legenda", value=True)
+                if not is_map:
+                    xlabel    = st.text_input("Etichetta Asse X")
+                    ylabel    = st.text_input("Etichetta Asse Y")
+                    show_grid = st.checkbox("Griglia", value=True)
+                    show_nums = st.checkbox("Numeri sulle barre", value=False)
+                    xtick_rot = st.slider(
+                        "Rotazione etichette X  (−1 = auto)",
+                        min_value=-1, max_value=90, value=-1, step=5,
+                    )
+                else:
+                    xlabel = ylabel = ""
+                    show_grid = show_nums = False
+                    xtick_rot = -1
 
             # ── Filtri ────────────────────────────────────────────────────────
-            st.subheader("Filtri")
-            n_filters = st.number_input("Numero di filtri", 0, 8, 0, step=1)
-            df_filt   = df.copy()
+            with st.expander("🔍  Filtri"):
+                n_filters = st.number_input("Numero di filtri", 0, 8, 0, step=1)
+                df_filt   = df.copy()
 
-            for fi in range(int(n_filters)):
-                st.markdown(f"**Filtro {fi + 1}**")
-                fc1, fc2 = st.columns(2)
-                with fc1:
-                    filt_col = st.selectbox("Colonna", [""] + list(df.columns), key=f"fc_{fi}")
-                with fc2:
-                    filt_type = st.selectbox(
-                        "Tipo",
-                        ["Valori (lista)", "Contiene", "Non contiene", "Num ≥", "Num ≤"],
-                        key=f"ft_{fi}",
-                    )
-                if filt_col and filt_col in df.columns:
-                    if filt_type == "Valori (lista)":
-                        uniq = sorted(df_filt[filt_col].dropna().unique(), key=str)
-                        sel  = st.multiselect("Valori da includere", uniq, key=f"fv_{fi}")
-                        if sel:
-                            df_filt = df_filt[df_filt[filt_col].astype(str).isin([str(v) for v in sel])]
-                    elif filt_type in ("Contiene", "Non contiene"):
-                        txt = st.text_input("Testo", key=f"fp_{fi}")
-                        if txt:
-                            mask = df_filt[filt_col].astype(str).str.contains(txt, case=False, na=False)
-                            df_filt = df_filt[mask if filt_type == "Contiene" else ~mask]
-                    elif filt_type == "Num ≥":
-                        val = st.number_input("Valore minimo", key=f"fp_{fi}", value=0.0)
-                        df_filt = df_filt[pd.to_numeric(df_filt[filt_col], errors="coerce") >= val]
-                    elif filt_type == "Num ≤":
-                        val = st.number_input("Valore massimo", key=f"fp_{fi}", value=0.0)
-                        df_filt = df_filt[pd.to_numeric(df_filt[filt_col], errors="coerce") <= val]
-                st.caption(f"→ {len(df_filt):,} righe dopo questo filtro")
+                for fi in range(int(n_filters)):
+                    st.markdown(f"**Filtro {fi + 1}**")
+                    fc1, fc2 = st.columns(2)
+                    with fc1:
+                        filt_col = st.selectbox("Colonna", [""] + list(df.columns), key=f"fc_{fi}")
+                    with fc2:
+                        filt_type = st.selectbox(
+                            "Tipo",
+                            ["Valori (lista)", "Contiene", "Non contiene", "Num ≥", "Num ≤"],
+                            key=f"ft_{fi}",
+                        )
+                    if filt_col and filt_col in df.columns:
+                        if filt_type == "Valori (lista)":
+                            uniq = sorted(df_filt[filt_col].dropna().unique(), key=str)
+                            sel  = st.multiselect("Valori da includere", uniq, key=f"fv_{fi}")
+                            if sel:
+                                df_filt = df_filt[df_filt[filt_col].astype(str).isin([str(v) for v in sel])]
+                        elif filt_type in ("Contiene", "Non contiene"):
+                            txt = st.text_input("Testo", key=f"fp_{fi}")
+                            if txt:
+                                mask = df_filt[filt_col].astype(str).str.contains(txt, case=False, na=False)
+                                df_filt = df_filt[mask if filt_type == "Contiene" else ~mask]
+                        elif filt_type == "Num ≥":
+                            val = st.number_input("Valore minimo", key=f"fp_{fi}", value=0.0)
+                            df_filt = df_filt[pd.to_numeric(df_filt[filt_col], errors="coerce") >= val]
+                        elif filt_type == "Num ≤":
+                            val = st.number_input("Valore massimo", key=f"fp_{fi}", value=0.0)
+                            df_filt = df_filt[pd.to_numeric(df_filt[filt_col], errors="coerce") <= val]
+                    st.caption(f"→ {len(df_filt):,} righe dopo questo filtro")
 
             gen = st.button("▶  Genera grafico", type="primary", use_container_width=True)
 
