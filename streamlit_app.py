@@ -1422,26 +1422,51 @@ def _render_chart_on_ax(ax, df_sub, chart_key, x, y, g,
     elif chart_key == "combo":
         if not x:
             raise ValueError("Combo richiede Asse X.")
-        agg_df, vcol = _agg_by_x(df_sub, x, y)
-        vals   = pd.to_numeric(agg_df[vcol], errors="coerce").fillna(0)
-        colors = _colors(len(agg_df), palette)
-        ax.bar(range(len(agg_df)), vals, color=colors, alpha=0.82)
-        ax.set_xticks(range(len(agg_df)))
-        _smart_labels(ax, agg_df[x].astype(str), xtick_rot)
-        if show_nums and ax.containers:
-            ax.bar_label(ax.containers[0], fmt="%.4g", fontsize=data_lbl_sz, padding=2)
+
+        if g and y and not is_freq:
+            # ── Barre raggruppate per g ────────────────────────────────────────
+            cats   = sorted(df_sub[x].dropna().unique(), key=str)
+            groups = sorted(df_sub[g].dropna().unique(), key=str)
+            cc     = _cat_colors(groups, palette)
+            agg_d  = _agg(df_sub, x, y, g)
+            pivot  = agg_d.pivot_table(index=x, columns=g, values=y,
+                                       aggfunc="sum").reindex(cats).fillna(0)
+            bar_colors = [cc.get(gr, "#888") for gr in pivot.columns]
+            pivot.plot.bar(ax=ax, color=bar_colors, alpha=0.82)
+            _smart_labels(ax, pivot.index, xtick_rot)
+            if show_nums:
+                for cnt in ax.containers:
+                    ax.bar_label(cnt, fmt="%.4g", fontsize=data_lbl_sz, padding=2)
+            x_idx = {str(c): i for i, c in enumerate(cats)}
+        else:
+            # ── Barre semplici ─────────────────────────────────────────────────
+            agg_df, vcol = _agg_by_x(df_sub, x, y)
+            vals   = pd.to_numeric(agg_df[vcol], errors="coerce").fillna(0)
+            colors = _colors(len(agg_df), palette)
+            ax.bar(range(len(agg_df)), vals, color=colors, alpha=0.82)
+            ax.set_xticks(range(len(agg_df)))
+            _smart_labels(ax, agg_df[x].astype(str), xtick_rot)
+            if show_nums and ax.containers:
+                ax.bar_label(ax.containers[0], fmt="%.4g", fontsize=data_lbl_sz, padding=2)
+            x_idx = {str(v): i for i, v in enumerate(agg_df[x])}
+
+        # ── Linea su asse Y2 separato ──────────────────────────────────────────
         if line_col and line_col in df_sub.columns:
             agg_l, lcol = _agg_by_x(df_sub, x, line_col)
             lvals = pd.to_numeric(agg_l[lcol], errors="coerce").fillna(0)
-            x_idx = {str(v): i for i, v in enumerate(agg_df[x])}
             lx    = [x_idx.get(str(v)) for v in agg_l[x]]
             pairs = [(xi, yv) for xi, yv in zip(lx, lvals) if xi is not None]
             if pairs:
                 px, py = zip(*pairs)
                 ax2 = ax.twinx()
-                ax2.plot(list(px), list(py), color="#333333", linewidth=2,
-                         marker="o", markersize=5, label=str(line_col))
-                ax2.set_ylabel(str(line_col), fontsize=9)
+                ax2.plot(list(px), list(py), color="#E63946", linewidth=2.2,
+                         marker="o", markersize=5, zorder=5)
+                ax2.set_ylabel(str(line_col), fontsize=9, color="#E63946")
+                ax2.tick_params(axis="y", labelcolor="#E63946")
+                # scala Y2 esplicita basata su min/max della linea
+                lv_min, lv_max = float(lvals.min()), float(lvals.max())
+                pad = (lv_max - lv_min) * 0.12 or abs(lv_min) * 0.1 or 1.0
+                ax2.set_ylim(lv_min - pad, lv_max + pad)
 
     else:
         raise ValueError(f"Tipo grafico non supportato: {chart_key!r}")
@@ -1797,7 +1822,7 @@ elif _sel == _TABS[2]:
                                                    value=bool(ss.g3_show_line))
 
                 elif chart_key == "combo":
-                    _lc_opts  = [""] + [c for c in list(df.columns) if c != x_col and c != y_col]
+                    _lc_opts  = [""] + [c for c in list(df.columns) if c != x_col]
                     _lc_val   = ss.g3_line_col if ss.g3_line_col in _lc_opts else ""
                     _lc_i     = _lc_opts.index(_lc_val) if _lc_val in _lc_opts else 0
                     _sel_lc   = st.selectbox("Colonna per la linea (asse Y2)",
