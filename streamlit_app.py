@@ -303,6 +303,22 @@ def _smart_labels(ax_, labels, override_rot=None):
         ax_.set_xticklabels(strs, rotation=30, ha="right", fontsize=8, rotation_mode="anchor")
 
 
+def _xkey(v):
+    """Chiave di ordinamento: numerica se possibile, altrimenti stringa."""
+    try:
+        return (0, float(v))
+    except (ValueError, TypeError):
+        return (1, str(v))
+
+
+def _sort_df_by_x(df_, x_col):
+    """Ordina df_ per x_col: numericamente se tutti i valori sono numerici, altrimenti come stringa."""
+    nums = pd.to_numeric(df_[x_col], errors="coerce")
+    if nums.notna().all():
+        return df_.sort_values(x_col, key=lambda s: pd.to_numeric(s, errors="coerce"))
+    return df_.sort_values(x_col, key=lambda s: s.astype(str))
+
+
 def _agg(df_, x_col, y_col, grp_col=None):
     g_cols = [c for c in [x_col, grp_col] if c]
     if y_col and g_cols:
@@ -316,14 +332,18 @@ def _agg(df_, x_col, y_col, grp_col=None):
 def _agg_by_x(df_, x_cols, y_col):
     """Aggrega df_ per x_cols: frequenza se y_col == _FREQ_LABEL, altrimenti somma numerica.
     x_cols può essere str (singolo) o list (heatmap: [col_cols, row_col]).
-    Restituisce df con colonne [*x_cols, value_col] e il nome della colonna valore."""
+    Restituisce df ordinato per il primo x_col, con colonne [*x_cols, value_col]."""
     if isinstance(x_cols, str):
         x_cols = [x_cols]
     if y_col == _FREQ_LABEL or not y_col:
         out = df_.groupby(x_cols, sort=False).size().reset_index(name="Frequenza")
-        return out, "Frequenza"
-    out = df_.groupby(x_cols, sort=False)[y_col].sum().reset_index()
-    return out, y_col
+        val_col = "Frequenza"
+    else:
+        out = df_.groupby(x_cols, sort=False)[y_col].sum().reset_index()
+        val_col = y_col
+    # ordina sempre per il primo asse X (numerico se possibile)
+    out = _sort_df_by_x(out, x_cols[0])
+    return out, val_col
 
 
 def _colors(n, palette_name):
@@ -625,7 +645,7 @@ def _plot_bubble_map(fig, ax, df_filt, geo_col, val_col, grp_col, gdf, palette, 
     max_val     = pd.to_numeric(agg[val_col], errors="coerce").max() or 1
 
     if grp_col and grp_col in agg.columns:
-        groups  = sorted(agg[grp_col].dropna().unique(), key=str)
+        groups  = sorted(agg[grp_col].dropna().unique(), key=_xkey)
         cc      = _cat_colors(groups, palette)
         for grp in groups:
             sub = agg[agg[grp_col] == grp]
@@ -683,7 +703,7 @@ def _plot_band_map(fig, ax, df_filt, geo_col, grp_col, val_col, gdf, palette, ti
     gdf.plot(color="#e4e4e4", edgecolor="#aaaaaa", linewidth=0.5, ax=ax)
     _name_up = {n.upper().strip(): n for n in gdf["GEO_NAME"]}
 
-    cats = sorted(df_filt[grp_col].dropna().unique(), key=str)
+    cats = sorted(df_filt[grp_col].dropna().unique(), key=_xkey)
     cc   = _cat_colors(cats, palette)
 
     df2 = df_filt.copy()
@@ -797,7 +817,7 @@ def _plot_pin_map(fig, ax, df_filt, geo_col, val_col, grp_col, gdf, palette, tit
     df2["_GEO"] = _normalize_geo(df2[geo_col], _name_up)
 
     if grp_col and grp_col in df2.columns:
-        groups = sorted(df2[grp_col].dropna().unique(), key=str)
+        groups = sorted(df2[grp_col].dropna().unique(), key=_xkey)
         cc     = _cat_colors(groups, palette)
         for grp in groups:
             sub = df2[df2[grp_col] == grp]
@@ -929,8 +949,8 @@ def _render_chart_on_ax(ax, df_sub, chart_key, x, y, g,
                 raise ValueError("La variante 3D (Pila mattoncini) richiede anche Raggruppa.")
             if not y:
                 raise ValueError("La variante 3D richiede anche Asse Y.")
-            cats   = sorted(df_sub[x].dropna().unique(), key=str)
-            groups = sorted(df_sub[g].dropna().unique(), key=str)
+            cats   = sorted(df_sub[x].dropna().unique(), key=_xkey)
+            groups = sorted(df_sub[g].dropna().unique(), key=_xkey)
             cc     = _cat_colors(groups, palette)
             agg_d  = _agg(df_sub, x, y, g)
             _piv   = agg_d.pivot_table(index=x, columns=g, values=y, aggfunc="sum").fillna(0)
@@ -998,10 +1018,10 @@ def _render_chart_on_ax(ax, df_sub, chart_key, x, y, g,
     elif chart_key == "line":
         if not x:
             raise ValueError("Seleziona almeno Asse X.")
-        x_all = sorted(df_sub[x].dropna().unique(), key=str)
+        x_all = sorted(df_sub[x].dropna().unique(), key=_xkey)
         x_pos = {str(v): i for i, v in enumerate(x_all)}
         if g:
-            groups = sorted(df_sub[g].dropna().unique(), key=str)
+            groups = sorted(df_sub[g].dropna().unique(), key=_xkey)
             colors = _colors(len(groups), palette)
             for grp, col_ in zip(groups, colors):
                 sub            = df_sub[df_sub[g] == grp]
@@ -1034,7 +1054,7 @@ def _render_chart_on_ax(ax, df_sub, chart_key, x, y, g,
         xv = pd.to_numeric(df_sub[x], errors="coerce")
         yv = pd.to_numeric(df_sub[y], errors="coerce")
         if g:
-            groups = sorted(df_sub[g].dropna().unique(), key=str)
+            groups = sorted(df_sub[g].dropna().unique(), key=_xkey)
             cc     = _cat_colors(groups, palette)
             for grp in groups:
                 mask = df_sub[g] == grp
@@ -1063,7 +1083,7 @@ def _render_chart_on_ax(ax, df_sub, chart_key, x, y, g,
         if not col_:
             raise ValueError("Seleziona una colonna numerica.")
         if g:
-            groups = sorted(df_sub[g].dropna().unique(), key=str)
+            groups = sorted(df_sub[g].dropna().unique(), key=_xkey)
             colors = _colors(len(groups), palette)
             for grp, clr in zip(groups, colors):
                 vals = pd.to_numeric(
@@ -1131,7 +1151,7 @@ def _render_chart_on_ax(ax, df_sub, chart_key, x, y, g,
             raise ValueError("Seleziona Asse Y (colonna numerica).")
         mp = dict(color="black", linewidth=1.5)
         if x:
-            cats = sorted(df_sub[x].dropna().unique(), key=str)
+            cats = sorted(df_sub[x].dropna().unique(), key=_xkey)
             data = [pd.to_numeric(
                 df_sub.loc[df_sub[x] == c, y], errors="coerce"
             ).dropna() for c in cats]
@@ -1149,7 +1169,7 @@ def _render_chart_on_ax(ax, df_sub, chart_key, x, y, g,
     elif chart_key == "radar":
         if not (x and y):
             raise ValueError("Radar richiede Asse X (categorie) e Asse Y (valori).")
-        cats = sorted(df_sub[x].dropna().unique(), key=str)
+        cats = sorted(df_sub[x].dropna().unique(), key=_xkey)
         N    = len(cats)
         if N < 3:
             raise ValueError("Il radar richiede almeno 3 categorie nell'Asse X.")
@@ -1169,7 +1189,7 @@ def _render_chart_on_ax(ax, df_sub, chart_key, x, y, g,
             ).mean() or 0) for cat in cats]
 
         if g:
-            groups = sorted(df_sub[g].dropna().unique(), key=str)
+            groups = sorted(df_sub[g].dropna().unique(), key=_xkey)
             cc     = _cat_colors(groups, palette)
             for grp in groups:
                 vals_c = _mean_per_cat(df_sub[df_sub[g] == grp]) + [0]
@@ -1200,8 +1220,8 @@ def _render_chart_on_ax(ax, df_sub, chart_key, x, y, g,
 
         if g and not is_freq:
             # ── Funnel con Raggruppa: ogni trapezio è diviso in segmenti per gruppo ──
-            cats   = sorted(df_sub[x].dropna().unique(), key=str)
-            groups = sorted(df_sub[g].dropna().unique(), key=str)
+            cats   = sorted(df_sub[x].dropna().unique(), key=_xkey)
+            groups = sorted(df_sub[g].dropna().unique(), key=_xkey)
             totals = {cat: float(pd.to_numeric(df_sub.loc[df_sub[x]==cat, y if y else "_"],
                                                errors="coerce").sum() if y else len(df_sub[df_sub[x]==cat]))
                       for cat in cats}
@@ -1387,14 +1407,14 @@ def _render_chart_on_ax(ax, df_sub, chart_key, x, y, g,
         if not y:
             raise ValueError("Seleziona Asse Y (valori numerici) per il violino.")
         if x:
-            cats      = sorted(df_sub[x].dropna().unique(), key=str)
+            cats      = sorted(df_sub[x].dropna().unique(), key=_xkey)
             cc        = _cat_colors(cats, palette)
             data_sets = [pd.to_numeric(df_sub.loc[df_sub[x]==c, y],
                                        errors="coerce").dropna().values for c in cats]
             labels    = [str(c) for c in cats]
             clrs      = [cc[c] for c in cats]
         elif g:
-            groups    = sorted(df_sub[g].dropna().unique(), key=str)
+            groups    = sorted(df_sub[g].dropna().unique(), key=_xkey)
             cc        = _cat_colors(groups, palette)
             data_sets = [pd.to_numeric(df_sub.loc[df_sub[g]==gr, y],
                                        errors="coerce").dropna().values for gr in groups]
@@ -1425,8 +1445,8 @@ def _render_chart_on_ax(ax, df_sub, chart_key, x, y, g,
 
         if g and y and not is_freq:
             # ── Barre raggruppate per g ────────────────────────────────────────
-            cats   = sorted(df_sub[x].dropna().unique(), key=str)
-            groups = sorted(df_sub[g].dropna().unique(), key=str)
+            cats   = sorted(df_sub[x].dropna().unique(), key=_xkey)
+            groups = sorted(df_sub[g].dropna().unique(), key=_xkey)
             cc     = _cat_colors(groups, palette)
             agg_d  = _agg(df_sub, x, y, g)
             pivot  = agg_d.pivot_table(index=x, columns=g, values=y,
@@ -1872,7 +1892,7 @@ elif _sel == _TABS[2]:
                         _fs["type"] = filt_type
                     if filt_col and filt_col in df.columns:
                         if filt_type == "Valori (lista)":
-                            uniq  = sorted(df_filt[filt_col].dropna().unique(), key=str)
+                            uniq  = sorted(df_filt[filt_col].dropna().unique(), key=_xkey)
                             _fdef = [v for v in (_fs.get("val") or []) if v in uniq]
                             sel   = st.multiselect("Valori da includere", uniq, default=_fdef)
                             _fs["val"] = sel
@@ -1920,7 +1940,7 @@ elif _sel == _TABS[2]:
                     if _sc and _sm == "separa" and not sep_col:
                         sep_col = _sc
                     elif _sc and _sm == "valore fisso" and _sc in df_filt.columns:
-                        _fv_opts = [""] + sorted([str(v) for v in df_filt[_sc].dropna().unique()], key=str)
+                        _fv_opts = [""] + sorted([str(v) for v in df_filt[_sc].dropna().unique()], key=_xkey)
                         _fvi     = _fv_opts.index(_sp["fval"]) if _sp["fval"] in _fv_opts else 0
                         _fv      = st.selectbox("Valore fisso", _fv_opts, index=_fvi)
                         _sp["fval"] = _fv
@@ -1983,7 +2003,7 @@ elif _sel == _TABS[2]:
             do_render    = gen
 
             if sep_col and sep_col in df_filt.columns:
-                _sv  = sorted(df_filt[sep_col].dropna().unique(), key=str)
+                _sv  = sorted(df_filt[sep_col].dropna().unique(), key=_xkey)
                 _nsv = len(_sv)
                 # Resetta indice quando la colonna separa cambia
                 if st.session_state.get("_sep_col_last") != sep_col:
