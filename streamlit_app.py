@@ -41,22 +41,29 @@ for k, v in _defaults.items():
 
 # ── Costanti ───────────────────────────────────────────────────────────────────
 CHART_TYPES = [
-    ("Barre verticali",    "bar_v"),
-    ("Barre orizzontali",  "bar_h"),
-    ("Barre stacked",      "bar_stacked"),
+    ("Barre",              "bar"),
+    ("Barre impilate",     "bar_stacked"),
     ("Linee",              "line"),
     ("Dispersione (XY)",   "scatter"),
     ("Istogramma",         "histogram"),
     ("Torta",              "pie"),
     ("Heatmap",            "heatmap"),
     ("Boxplot",            "boxplot"),
+    ("Radar",              "radar"),
+    ("Imbuto (Funnel)",    "funnel"),
+    ("Podio",              "podio"),
+    ("Violino",            "violin"),
+    ("Barre + Linee",      "combo"),
     ("Mappa coropletica",  "choropleth"),
     ("Mappa bolla",        "bubble_map"),
     ("Mappa bande",        "band_map"),
     ("Mappa pin",          "pin_map"),
 ]
 
-MAP_KEYS = {"choropleth", "bubble_map", "band_map", "pin_map"}
+MAP_KEYS    = {"choropleth", "bubble_map", "band_map", "pin_map"}
+# Grafici che usano assi personalizzati (axis off / polare) — _apply_axis_settings saltata
+_NO_AXIS_KEYS = {"funnel", "podio"}
+_FREQ_LABEL   = "— Frequenza —"
 
 _SDG_COLORS = [
     "#E5243B","#DDA63A","#4C9F38","#C5192D","#FF3A21",
@@ -304,6 +311,19 @@ def _agg(df_, x_col, y_col, grp_col=None):
         return df_[x_col].value_counts().reset_index().rename(
             columns={x_col: x_col, "count": "_n"})
     return df_
+
+
+def _agg_by_x(df_, x_cols, y_col):
+    """Aggrega df_ per x_cols: frequenza se y_col == _FREQ_LABEL, altrimenti somma numerica.
+    x_cols può essere str (singolo) o list (heatmap: [col_cols, row_col]).
+    Restituisce df con colonne [*x_cols, value_col] e il nome della colonna valore."""
+    if isinstance(x_cols, str):
+        x_cols = [x_cols]
+    if y_col == _FREQ_LABEL or not y_col:
+        out = df_.groupby(x_cols, sort=False).size().reset_index(name="Frequenza")
+        return out, "Frequenza"
+    out = df_.groupby(x_cols, sort=False)[y_col].sum().reset_index()
+    return out, y_col
 
 
 def _colors(n, palette_name):
@@ -830,74 +850,164 @@ def _plot_pin_map(fig, ax, df_filt, geo_col, val_col, grp_col, gdf, palette, tit
 
 
 def _render_chart_on_ax(ax, df_sub, chart_key, x, y, g,
-                         palette, show_nums, xtick_rot, data_lbl_sz):
-    """Renderizza un grafico standard su ax — usato sia in modalità singola sia per i pannelli Separa."""
-    if chart_key == "bar_v":
-        if x and y and g:
+                         palette, show_nums, xtick_rot, data_lbl_sz, extra=None):
+    """Renderizza grafico su ax; restituisce ax (può essere nuovo asse polare per radar)."""
+    ex         = extra or {}
+    horiz      = bool(ex.get("horiz",      False))
+    stacked_3d = bool(ex.get("stacked_3d", False))
+    show_line  = bool(ex.get("show_line",  False))
+    line_col   = ex.get("line_col") or None
+    podio_n    = max(1, min(10, int(ex.get("podio_n", 3))))
+    is_freq    = (y == _FREQ_LABEL or not y)
+
+    # ── BARRE (verticali / orizzontali) ──────────────────────────────────────
+    if chart_key == "bar":
+        if not x:
+            raise ValueError("Seleziona almeno Asse X.")
+        if not is_freq and g:
             agg   = _agg(df_sub, x, y, g)
             pivot = agg.pivot_table(index=x, columns=g, values=y, aggfunc="sum").fillna(0)
-            pivot.plot.bar(ax=ax, color=_colors(len(pivot.columns), palette))
+            cols  = _colors(len(pivot.columns), palette)
+            if horiz:
+                pivot.plot.barh(ax=ax, color=cols)
+            else:
+                pivot.plot.bar(ax=ax, color=cols)
+                _smart_labels(ax, pivot.index, xtick_rot)
+            if show_nums:
+                for cnt in ax.containers:
+                    ax.bar_label(cnt, fmt="%.4g", fontsize=data_lbl_sz, padding=2)
+        elif not is_freq:
+            agg_df, val_col = _agg_by_x(df_sub, x, y)
+            vals = pd.to_numeric(agg_df[val_col], errors="coerce").fillna(0)
+            cols = _colors(len(agg_df), palette)
+            if horiz:
+                ax.barh(range(len(agg_df)), vals, color=cols)
+                ax.set_yticks(range(len(agg_df)))
+                ax.set_yticklabels(agg_df[x].astype(str), fontsize=7)
+            else:
+                ax.bar(range(len(agg_df)), vals, color=cols)
+                ax.set_xticks(range(len(agg_df)))
+                _smart_labels(ax, agg_df[x].astype(str), xtick_rot)
+            if show_nums and ax.containers:
+                ax.bar_label(ax.containers[0], fmt="%.4g", fontsize=data_lbl_sz, padding=2)
+        else:
+            # Frequenza: con o senza g
+            if g:
+                frq = df_sub.groupby([x, g], sort=False).size().reset_index(name="Frequenza")
+                pivot = frq.pivot_table(index=x, columns=g, values="Frequenza", fill_value=0)
+                cols  = _colors(len(pivot.columns), palette)
+                if horiz:
+                    pivot.plot.barh(ax=ax, color=cols)
+                else:
+                    pivot.plot.bar(ax=ax, color=cols)
+                    _smart_labels(ax, pivot.index, xtick_rot)
+                if show_nums:
+                    for cnt in ax.containers:
+                        ax.bar_label(cnt, fmt="%d", fontsize=data_lbl_sz, padding=2)
+            else:
+                agg_df, _ = _agg_by_x(df_sub, x, _FREQ_LABEL)
+                vals = pd.to_numeric(agg_df["Frequenza"], errors="coerce").fillna(0)
+                cols = _colors(len(agg_df), palette)
+                if horiz:
+                    ax.barh(range(len(agg_df)), vals, color=cols)
+                    ax.set_yticks(range(len(agg_df)))
+                    ax.set_yticklabels(agg_df[x].astype(str), fontsize=7)
+                else:
+                    ax.bar(range(len(agg_df)), vals, color=cols)
+                    ax.set_xticks(range(len(agg_df)))
+                    _smart_labels(ax, agg_df[x].astype(str), xtick_rot)
+                if show_nums and ax.containers:
+                    ax.bar_label(ax.containers[0], fmt="%d", fontsize=data_lbl_sz, padding=2)
+
+    # ── BARRE IMPILATE (normale + 3D mattoncini) ──────────────────────────────
+    elif chart_key == "bar_stacked":
+        if not x:
+            raise ValueError("Barre impilate richiedono almeno Asse X.")
+        if stacked_3d:
+            import matplotlib.patches as mpatches
+            if not g:
+                raise ValueError("La variante 3D (Pila mattoncini) richiede anche Raggruppa.")
+            if not y:
+                raise ValueError("La variante 3D richiede anche Asse Y.")
+            cats   = sorted(df_sub[x].dropna().unique(), key=str)
+            groups = sorted(df_sub[g].dropna().unique(), key=str)
+            cc     = _cat_colors(groups, palette)
+            agg_d  = _agg(df_sub, x, y, g)
+            _piv   = agg_d.pivot_table(index=x, columns=g, values=y, aggfunc="sum").fillna(0)
+            pivot  = _piv.reindex(
+                index=cats,
+                columns=[gr for gr in groups if gr in _piv.columns],
+                fill_value=0)
+            dx_, dy_, bar_w = 0.22, 0.11, 0.6
+            ax.axis("off")
+            max_val = pivot.sum(axis=1).max() or 1
+            n_cats  = len(cats)
+            y_scale = (n_cats * 1.2) / max_val
+
+            def _shade(col_hex, factor):
+                r_, g_, b_, a_ = mcolors.to_rgba(col_hex)
+                return (min(1, r_ * factor), min(1, g_ * factor), min(1, b_ * factor), a_)
+
+            for ci, cat in enumerate(cats):
+                x0   = ci * 1.2
+                base = 0.0
+                for grp in groups:
+                    if grp not in pivot.columns:
+                        continue
+                    val = float(pivot.loc[cat, grp]) if cat in pivot.index else 0.0
+                    if val <= 0:
+                        continue
+                    h  = val * y_scale
+                    b_ = base * y_scale
+                    c  = cc[grp]
+                    ax.add_patch(mpatches.Polygon(
+                        [[x0, b_], [x0+bar_w, b_], [x0+bar_w, b_+h], [x0, b_+h]],
+                        closed=True, facecolor=c, edgecolor="white", linewidth=0.6, zorder=3))
+                    ax.add_patch(mpatches.Polygon(
+                        [[x0, b_+h], [x0+bar_w, b_+h],
+                         [x0+bar_w+dx_, b_+h+dy_], [x0+dx_, b_+h+dy_]],
+                        closed=True, facecolor=_shade(c, 1.35), edgecolor="white",
+                        linewidth=0.6, zorder=3))
+                    ax.add_patch(mpatches.Polygon(
+                        [[x0+bar_w, b_], [x0+bar_w+dx_, b_+dy_],
+                         [x0+bar_w+dx_, b_+h+dy_], [x0+bar_w, b_+h]],
+                        closed=True, facecolor=_shade(c, 0.65), edgecolor="white",
+                        linewidth=0.6, zorder=3))
+                    base += val
+                ax.text(x0 + bar_w / 2, -0.15, str(cat),
+                        ha="center", va="top", fontsize=8, color="#333")
+            handles = [mpatches.Patch(facecolor=cc[gr], label=str(gr))
+                       for gr in groups if gr in cc]
+            if handles:
+                ax.legend(handles=handles, fontsize=8, loc="upper right")
+            total_w = (n_cats - 1) * 1.2 + bar_w + dx_ + 0.3
+            ax.set_xlim(-0.3, total_w)
+            ax.set_ylim(-0.4, max_val * y_scale * 1.25 + dy_ + 0.2)
+        else:
+            if not (y and g):
+                raise ValueError("Barre impilate richiedono Asse X, Asse Y e Raggruppa.")
+            agg   = _agg(df_sub, x, y, g)
+            pivot = agg.pivot_table(index=x, columns=g, values=y, aggfunc="sum").fillna(0)
+            pivot.plot.bar(ax=ax, stacked=True, color=_colors(len(pivot.columns), palette))
             _smart_labels(ax, pivot.index, xtick_rot)
             if show_nums:
-                for container in ax.containers:
-                    ax.bar_label(container, fmt="%.4g", fontsize=data_lbl_sz, padding=2)
-        elif x and y:
-            agg  = _agg(df_sub, x, y)
-            vals = pd.to_numeric(agg[y], errors="coerce").fillna(0)
-            ax.bar(range(len(agg)), vals, color=_colors(len(agg), palette))
-            ax.set_xticks(range(len(agg)))
-            _smart_labels(ax, agg[x].astype(str), xtick_rot)
-            if show_nums:
-                ax.bar_label(ax.containers[0], fmt="%.4g", fontsize=data_lbl_sz, padding=2)
-        elif x:
-            vc = df_sub[x].value_counts()
-            ax.bar(range(len(vc)), vc.values, color=_colors(len(vc), palette))
-            ax.set_xticks(range(len(vc)))
-            _smart_labels(ax, vc.index.astype(str), xtick_rot)
-            if show_nums:
-                ax.bar_label(ax.containers[0], fmt="%d", fontsize=data_lbl_sz, padding=2)
-        else:
-            raise ValueError("Seleziona almeno Asse X.")
+                for cnt in ax.containers:
+                    ax.bar_label(cnt, fmt="%.4g", fontsize=data_lbl_sz, padding=2)
 
-    elif chart_key == "bar_h":
-        if x and y and g:
-            agg   = _agg(df_sub, x, y, g)
-            pivot = agg.pivot_table(index=x, columns=g, values=y, aggfunc="sum").fillna(0)
-            pivot.plot.barh(ax=ax, color=_colors(len(pivot.columns), palette))
-        elif x and y:
-            agg  = _agg(df_sub, x, y)
-            vals = pd.to_numeric(agg[y], errors="coerce").fillna(0)
-            ax.barh(range(len(agg)), vals, color=_colors(len(agg), palette))
-            ax.set_yticks(range(len(agg)))
-            ax.set_yticklabels(agg[x].astype(str), fontsize=7)
-        elif x:
-            vc = df_sub[x].value_counts()
-            ax.barh(range(len(vc)), vc.values, color=_colors(len(vc), palette))
-            ax.set_yticks(range(len(vc)))
-            ax.set_yticklabels(vc.index.astype(str), fontsize=7)
-        else:
-            raise ValueError("Seleziona almeno Asse X.")
-
-    elif chart_key == "bar_stacked":
-        if not (x and y and g):
-            raise ValueError("Barre stacked richiedono Asse X, Asse Y e Raggruppa.")
-        agg   = _agg(df_sub, x, y, g)
-        pivot = agg.pivot_table(index=x, columns=g, values=y, aggfunc="sum").fillna(0)
-        pivot.plot.bar(ax=ax, stacked=True, color=_colors(len(pivot.columns), palette))
-        _smart_labels(ax, pivot.index, xtick_rot)
-
+    # ── LINEE ─────────────────────────────────────────────────────────────────
     elif chart_key == "line":
-        if not (x and y):
-            raise ValueError("Seleziona Asse X e Asse Y.")
+        if not x:
+            raise ValueError("Seleziona almeno Asse X.")
         x_all = sorted(df_sub[x].dropna().unique(), key=str)
         x_pos = {str(v): i for i, v in enumerate(x_all)}
         if g:
             groups = sorted(df_sub[g].dropna().unique(), key=str)
             colors = _colors(len(groups), palette)
             for grp, col_ in zip(groups, colors):
-                sub   = df_sub[df_sub[g] == grp].sort_values(x)
-                xvals = [x_pos.get(str(v)) for v in sub[x]]
-                yvals = pd.to_numeric(sub[y], errors="coerce").tolist()
+                sub            = df_sub[df_sub[g] == grp]
+                agg_sub, vcol  = _agg_by_x(sub, x, y)
+                xvals = [x_pos.get(str(v)) for v in agg_sub[x]]
+                yvals = pd.to_numeric(agg_sub[vcol], errors="coerce").tolist()
                 pairs = [(xv, yv) for xv, yv in zip(xvals, yvals)
                          if xv is not None and not pd.isna(yv)]
                 if pairs:
@@ -905,33 +1015,49 @@ def _render_chart_on_ax(ax, df_sub, chart_key, x, y, g,
                     ax.plot(list(xs_), list(ys_), marker="o", markersize=4,
                             label=str(grp), color=col_)
         else:
-            agg   = df_sub.groupby(x, sort=False)[y].sum().reset_index()
-            xvals = [x_pos.get(str(v)) for v in agg[x]]
-            yvals = pd.to_numeric(agg[y], errors="coerce").tolist()
+            agg_df, vcol = _agg_by_x(df_sub, x, y)
+            xvals = [x_pos.get(str(v)) for v in agg_df[x]]
+            yvals = pd.to_numeric(agg_df[vcol], errors="coerce").tolist()
             pairs = [(xv, yv) for xv, yv in zip(xvals, yvals)
                      if xv is not None and not pd.isna(yv)]
             if pairs:
                 xs_, ys_ = zip(*pairs)
-                ax.plot(list(xs_), list(ys_), marker="o", markersize=4)
+                ax.plot(list(xs_), list(ys_), marker="o", markersize=4,
+                        color=_colors(3, palette)[1])
         ax.set_xticks(range(len(x_all)))
         _smart_labels(ax, [str(v) for v in x_all], xtick_rot)
 
+    # ── DISPERSIONE ───────────────────────────────────────────────────────────
     elif chart_key == "scatter":
         if not (x and y):
-            raise ValueError("Seleziona Asse X e Asse Y.")
+            raise ValueError("Seleziona Asse X e Asse Y numerici.")
+        xv = pd.to_numeric(df_sub[x], errors="coerce")
+        yv = pd.to_numeric(df_sub[y], errors="coerce")
         if g:
             groups = sorted(df_sub[g].dropna().unique(), key=str)
-            colors = _colors(len(groups), palette)
-            for grp, col_ in zip(groups, colors):
-                sub = df_sub[df_sub[g] == grp]
-                ax.scatter(pd.to_numeric(sub[x], errors="coerce"),
-                           pd.to_numeric(sub[y], errors="coerce"),
-                           label=str(grp), alpha=0.7, s=30, color=col_)
+            cc     = _cat_colors(groups, palette)
+            for grp in groups:
+                mask = df_sub[g] == grp
+                col_ = cc[grp]
+                ax.scatter(xv[mask], yv[mask], s=40, alpha=0.7,
+                           color=col_, edgecolors="white", linewidths=0.4,
+                           label=str(grp))
+                if show_line:
+                    tmp = pd.DataFrame({"xv": xv[mask], "yv": yv[mask]}).dropna().sort_values("xv")
+                    if len(tmp) >= 2:
+                        ax.plot(tmp["xv"].values, tmp["yv"].values,
+                                color=col_, alpha=0.5, linewidth=1)
         else:
-            ax.scatter(pd.to_numeric(df_sub[x], errors="coerce"),
-                       pd.to_numeric(df_sub[y], errors="coerce"),
-                       alpha=0.7, s=30, c=[_get_cmap(palette, fallback="tab10")(0)])
+            col_ = _colors(3, palette)[1]
+            ax.scatter(xv, yv, s=40, alpha=0.7, color=col_,
+                       edgecolors="white", linewidths=0.4)
+            if show_line:
+                tmp = pd.DataFrame({"xv": xv, "yv": yv}).dropna().sort_values("xv")
+                if len(tmp) >= 2:
+                    ax.plot(tmp["xv"].values, tmp["yv"].values,
+                            color=col_, alpha=0.5, linewidth=1)
 
+    # ── ISTOGRAMMA ────────────────────────────────────────────────────────────
     elif chart_key == "histogram":
         col_ = y or x
         if not col_:
@@ -939,28 +1065,26 @@ def _render_chart_on_ax(ax, df_sub, chart_key, x, y, g,
         if g:
             groups = sorted(df_sub[g].dropna().unique(), key=str)
             colors = _colors(len(groups), palette)
-            for grp, col_c in zip(groups, colors):
+            for grp, clr in zip(groups, colors):
                 vals = pd.to_numeric(
                     df_sub.loc[df_sub[g] == grp, col_], errors="coerce"
                 ).dropna()
-                ax.hist(vals, bins=20, alpha=0.55, label=str(grp), color=col_c)
+                ax.hist(vals, bins=20, alpha=0.55, label=str(grp), color=clr)
         else:
             vals = pd.to_numeric(df_sub[col_], errors="coerce").dropna()
-            ax.hist(vals, bins=20, color=_get_cmap(palette, fallback="tab10")(0))
+            ax.hist(vals, bins=20, color=_colors(3, palette)[1])
 
+    # ── TORTA ─────────────────────────────────────────────────────────────────
     elif chart_key == "pie":
-        if y and x:
-            vc = df_sub.groupby(x)[y].sum().sort_values(ascending=False)
-        elif x:
-            vc = df_sub[x].value_counts()
-        elif y:
-            vc = df_sub[y].value_counts()
-        else:
-            raise ValueError("Seleziona almeno una colonna.")
-        top = vc.head(12)
+        if not x:
+            raise ValueError("Seleziona Asse X (categorie).")
+        agg_df, vcol = _agg_by_x(df_sub, x, y)
+        agg_df = agg_df.sort_values(vcol, ascending=False)
+        top    = agg_df.head(12)
+        vals   = pd.to_numeric(top[vcol], errors="coerce").fillna(0)
         _, _, autotexts = ax.pie(
-            top.values,
-            labels=[str(l) for l in top.index],
+            vals.values,
+            labels=[str(l) for l in top[x]],
             autopct="%1.1f%%", startangle=90,
             colors=_colors(len(top), palette),
         )
@@ -968,37 +1092,298 @@ def _render_chart_on_ax(ax, df_sub, chart_key, x, y, g,
             t.set_fontsize(8)
         ax.axis("equal")
 
+    # ── HEATMAP (3 input: x=colonne, g=righe, y=valori/colore) ───────────────
     elif chart_key == "heatmap":
-        if not (x and y):
-            raise ValueError("Seleziona Asse X (righe) e Asse Y (colonne).")
-        val_col = g or None
-        if val_col and val_col in df_sub.columns:
-            piv = df_sub.pivot_table(index=x, columns=y, values=val_col, aggfunc="mean")
+        if not (x and g):
+            raise ValueError("Heatmap richiede Asse X1 (colonne) e Asse X2 (righe).")
+        if is_freq:
+            piv = (df_sub.groupby([g, x], sort=False).size()
+                   .unstack(x).fillna(0))
+            cbar_lbl = "Frequenza"
         else:
-            piv = df_sub.pivot_table(index=x, columns=y, aggfunc="size", fill_value=0)
-        im = ax.imshow(piv.values, aspect="auto", cmap=_get_cmap(palette, fallback="YlOrRd"))
-        ax.set_xticks(range(len(piv.columns)))
-        ax.set_xticklabels(piv.columns, rotation=45, ha="right", fontsize=7)
-        ax.set_yticks(range(len(piv.index)))
-        ax.set_yticklabels(piv.index, fontsize=7)
-        ax.get_figure().colorbar(im, ax=ax, shrink=0.7)
+            piv = df_sub.pivot_table(index=g, columns=x, values=y,
+                                     aggfunc="mean", fill_value=0)
+            cbar_lbl = str(y)
+        if piv.empty:
+            raise ValueError("Heatmap vuota: nessun dato con le selezioni correnti.")
+        cmap   = _get_cmap(palette, fallback="YlOrRd")
+        vmax   = float(piv.values.max()) or 1.0
+        im     = ax.imshow(piv.values, aspect="auto", cmap=cmap, vmin=0, vmax=vmax)
+        cols_x = list(range(len(piv.columns)))
+        rows_y = list(range(len(piv.index)))
+        ax.set_xticks(cols_x)
+        ax.set_xticklabels([str(c) for c in piv.columns],
+                            rotation=45, ha="right", fontsize=7)
+        ax.set_yticks(rows_y)
+        ax.set_yticklabels([str(r) for r in piv.index], fontsize=7)
+        for i in rows_y:
+            for j in cols_x:
+                v      = piv.iloc[i, j]
+                txtcol = "white" if (v / vmax) > 0.55 else "#111"
+                ax.text(j, i, f"{v:,.0f}", ha="center", va="center",
+                        fontsize=6, color=txtcol)
+        cb = ax.get_figure().colorbar(im, ax=ax, shrink=0.7)
+        cb.set_label(cbar_lbl, fontsize=8)
 
+    # ── BOXPLOT ───────────────────────────────────────────────────────────────
     elif chart_key == "boxplot":
         if not y:
             raise ValueError("Seleziona Asse Y (colonna numerica).")
+        mp = dict(color="black", linewidth=1.5)
         if x:
             cats = sorted(df_sub[x].dropna().unique(), key=str)
             data = [pd.to_numeric(
                 df_sub.loc[df_sub[x] == c, y], errors="coerce"
             ).dropna() for c in cats]
-            bp = ax.boxplot(data, patch_artist=True)
+            bp = ax.boxplot(data, patch_artist=True, medianprops=mp)
             for patch, col_ in zip(bp["boxes"], _colors(len(cats), palette)):
                 patch.set_facecolor(col_)
             ax.set_xticks(range(1, len(cats) + 1))
             _smart_labels(ax, [str(c) for c in cats], xtick_rot)
         else:
             vals = pd.to_numeric(df_sub[y], errors="coerce").dropna()
-            ax.boxplot(vals, patch_artist=True)
+            bp   = ax.boxplot(vals, patch_artist=True, medianprops=mp)
+            bp["boxes"][0].set_facecolor(_colors(3, palette)[1])
+
+    # ── RADAR ─────────────────────────────────────────────────────────────────
+    elif chart_key == "radar":
+        if not (x and y):
+            raise ValueError("Radar richiede Asse X (categorie) e Asse Y (valori).")
+        cats = sorted(df_sub[x].dropna().unique(), key=str)
+        N    = len(cats)
+        if N < 3:
+            raise ValueError("Il radar richiede almeno 3 categorie nell'Asse X.")
+        angles   = np.linspace(0, 2 * np.pi, N, endpoint=False).tolist()
+        angles_c = angles + angles[:1]
+        # rimpiazza asse normale con asse polare (restituito alla fine)
+        fig_  = ax.get_figure()
+        pos   = ax.get_position()
+        ax.remove()
+        ax = fig_.add_axes([pos.x0, pos.y0, pos.width, pos.height], polar=True)
+        ax.set_theta_offset(np.pi / 2)
+        ax.set_theta_direction(-1)
+
+        def _mean_per_cat(sub):
+            return [float(pd.to_numeric(
+                sub.loc[sub[x] == cat, y], errors="coerce"
+            ).mean() or 0) for cat in cats]
+
+        if g:
+            groups = sorted(df_sub[g].dropna().unique(), key=str)
+            cc     = _cat_colors(groups, palette)
+            for grp in groups:
+                vals_c = _mean_per_cat(df_sub[df_sub[g] == grp]) + [0]
+                vals_c[-1] = vals_c[0]
+                c = cc[grp]
+                ax.plot(angles_c, vals_c, color=c, linewidth=2, label=str(grp))
+                ax.fill(angles_c, vals_c, alpha=0.15, color=c)
+        else:
+            vals_c = _mean_per_cat(df_sub) + [0]
+            vals_c[-1] = vals_c[0]
+            c = _colors(3, palette)[1]
+            ax.plot(angles_c, vals_c, color=c, linewidth=2)
+            ax.fill(angles_c, vals_c, alpha=0.2, color=c)
+        ax.set_xticks(angles)
+        ax.set_xticklabels([str(c) for c in cats], fontsize=8)
+        ax.grid(True, alpha=0.35)
+
+    # ── IMBUTO (FUNNEL) ───────────────────────────────────────────────────────
+    elif chart_key == "funnel":
+        if not x:
+            raise ValueError("Seleziona Asse X (etichette) per l'imbuto.")
+        import matplotlib.patches as mpatches
+        agg_df, vcol = _agg_by_x(df_sub, x, y)
+        agg_df  = agg_df.sort_values(vcol, ascending=False).reset_index(drop=True)
+        labels  = list(agg_df[x].astype(str))
+        values  = list(pd.to_numeric(agg_df[vcol], errors="coerce").fillna(0))
+        N = len(labels)
+        if N < 2:
+            raise ValueError("L'imbuto richiede almeno 2 categorie.")
+        colors  = _colors(N, palette)
+        v_max   = max(values) or 1
+        cx, max_h, min_h = 0.5, 0.42, 0.07
+        halfs   = [min_h + (v / v_max) * (max_h - min_h) for v in values]
+        ax.axis("off")
+        ax.set_xlim(-0.6, 1.6)
+        ax.set_ylim(-0.3, N + 0.3)
+        for i in range(N):
+            col_   = colors[i]
+            y_top  = N - i;  y_bot = N - i - 1;  y_mid = (y_top + y_bot) / 2
+            h_top  = halfs[i];  h_bot = halfs[i + 1] if i + 1 < N else min_h
+            r0, g0, b0, _ = mcolors.to_rgba(col_)
+            hi = (min(1, r0*1.4), min(1, g0*1.4), min(1, b0*1.4), 0.7)
+            ax.add_patch(mpatches.Polygon(
+                [[cx-h_top, y_top], [cx+h_top, y_top],
+                 [cx+h_bot, y_bot], [cx-h_bot, y_bot]],
+                closed=True, facecolor=col_, edgecolor="white", linewidth=0.8, zorder=2))
+            ax.plot([cx-h_top, cx+h_top], [y_top, y_top],
+                    color=hi, linewidth=2.5, zorder=4, solid_capstyle="round")
+            ax.annotate("", xy=(-0.04, y_mid), xytext=(cx-h_top, y_mid),
+                        arrowprops=dict(arrowstyle="-", color=col_, lw=0.85, alpha=0.65), zorder=3)
+            ax.text(-0.08, y_mid, str(labels[i]),
+                    ha="right", va="center", fontsize=9, fontweight="bold",
+                    color="#1a1a1a", zorder=5)
+            pct = values[i] / values[0] * 100 if values[0] else 0
+            ax.annotate("", xy=(1.04, y_mid), xytext=(cx+h_top, y_mid),
+                        arrowprops=dict(arrowstyle="-", color=col_, lw=0.85, alpha=0.65), zorder=3)
+            ax.text(1.08, y_mid, f"{int(round(values[i])):,}  ({pct:.1f} %)",
+                    ha="left", va="center", fontsize=9, color="#1a1a1a", zorder=5)
+
+    # ── PODIO ─────────────────────────────────────────────────────────────────
+    elif chart_key == "podio":
+        if not x:
+            raise ValueError("Seleziona Asse X (nomi) per il podio.")
+        from matplotlib.patches import Rectangle
+        if y and y in df_sub.columns and y != _FREQ_LABEL:
+            nums = pd.to_numeric(df_sub[y], errors="coerce")
+            df2  = df_sub.assign(_score=nums).dropna(subset=["_score"])
+            df2  = df2.sort_values("_score", ascending=False).reset_index(drop=True)
+            score_col = y
+        else:
+            df2 = df_sub.copy().reset_index(drop=True)
+            df2["_score"] = (len(df2) - df2.index).astype(float)
+            score_col = None
+        n = min(len(df2), podio_n)
+        if n == 0:
+            raise ValueError("Nessun dato per il podio.")
+        df2 = df2.iloc[:n].copy()
+
+        _MEDAL   = [("#D4AF37","#9A7600"), ("#B0B0BC","#6A6A80"), ("#CD7F32","#8B4513")]
+        _extra_c = _colors(max(1, n), palette)
+        ORDINALS = ("1°","2°","3°","4°","5°","6°","7°","8°","9°","10°")
+        _STEP_H  = {0: 1.00, 1: 0.70, 2: 0.50}
+
+        def _gc(ri):
+            return _MEDAL[ri] if ri < 3 else (_extra_c[ri % len(_extra_c)], "#555555")
+        def _sh(ri):
+            return _STEP_H.get(ri, max(0.25, 0.50 - (ri - 2) * 0.06))
+
+        _OFF  = (0, 1, -1, -2, 2, -3, 3, -4, 4, -5)
+        ctr   = -min(_OFF[:n])
+        col4r = [ctr + _OFF[i] for i in range(n)]
+        col_w = 1.0;  sw = 0.86;  card_h = 0.58;  cgap = 0.05
+        strip_h = 0.085;  base_h = 0.05;  white_h = card_h - strip_h
+        _fs_n = max(4.5, 7.5 - n * 0.22);  _fs_d = max(3.5, 5.8 - n * 0.18)
+        _fs_o = max(5.5, 7.5 - n * 0.2)
+
+        ax.set_facecolor("#F0F0F0")
+        for ri in range(n):
+            ci = col4r[ri];  cx_p = ci*col_w + col_w/2;  x0_p = cx_p - sw/2
+            sh = _sh(ri);  fc, ec = _gc(ri)
+            ax.add_patch(Rectangle((x0_p, 0), sw, sh, facecolor=fc,
+                                    edgecolor=ec, linewidth=1.5, zorder=3))
+            ax.add_patch(Rectangle((x0_p, sh-0.022), sw, 0.022,
+                                    facecolor="white", alpha=0.22, linewidth=0, zorder=4))
+            ax.text(cx_p, sh*0.40, str(ri+1), ha="center", va="center",
+                    fontsize=28, fontweight="bold", color="white", alpha=0.28, zorder=4)
+            cy = sh + cgap
+            ax.add_patch(Rectangle((x0_p, cy), sw, card_h, facecolor="white",
+                                    edgecolor=ec, linewidth=2.0, zorder=5))
+            ax.add_patch(Rectangle((x0_p, cy+white_h), sw, strip_h,
+                                    facecolor=fc, linewidth=0, zorder=6))
+            ax.text(cx_p, cy+white_h+strip_h/2, ORDINALS[ri],
+                    ha="center", va="center", fontsize=_fs_o,
+                    fontweight="bold", color="white", zorder=7)
+            name = str(df2.iloc[ri][x]) if x in df2.columns else f"#{ri+1}"
+            if len(name) > 30:
+                name = name[:29] + "…"
+            nw = "\n".join(textwrap.wrap(name, 12)[:2]) or name
+            details = []
+            if score_col and score_col in df2.columns:
+                sv = df2.iloc[ri]["_score"]
+                try:
+                    sv_s = f"{sv:,.0f}" if float(sv)==int(float(sv)) else f"{sv:.4g}"
+                except Exception:
+                    sv_s = str(sv)
+                details.append(f"{score_col[:12]}: {sv_s}")
+            if g and g in df2.columns:
+                details.append(str(df2.iloc[ri][g])[:18])
+            ny = cy + white_h * (0.68 if details else 0.50)
+            ax.text(cx_p, ny, nw, ha="center", va="center",
+                    fontsize=_fs_n, fontweight="bold", color="#111111",
+                    zorder=7, multialignment="center", clip_on=True)
+            if details:
+                ax.text(cx_p, cy+white_h*0.18, "\n".join(details),
+                        ha="center", va="center", fontsize=_fs_d,
+                        color="#555555", style="italic", zorder=7,
+                        multialignment="center", clip_on=True)
+            if ri == 0:
+                ax.text(cx_p, cy+card_h+0.025, "★",
+                        ha="center", va="bottom", fontsize=16,
+                        color="#D4AF37", fontweight="bold", zorder=7)
+        ax.add_patch(Rectangle((-0.07, -base_h), n*col_w+0.14, base_h,
+                                facecolor="#2A2A2A", edgecolor="#111111",
+                                linewidth=1, zorder=2))
+        ax.set_xlim(-0.2, n*col_w+0.2)
+        ax.set_ylim(-base_h-0.03, 1.0+card_h+cgap+0.22)
+        ax.set_xticks([]); ax.set_yticks([])
+        for sp in ax.spines.values(): sp.set_visible(False)
+
+    # ── VIOLINO ───────────────────────────────────────────────────────────────
+    elif chart_key == "violin":
+        if not y:
+            raise ValueError("Seleziona Asse Y (valori numerici) per il violino.")
+        if x:
+            cats      = sorted(df_sub[x].dropna().unique(), key=str)
+            cc        = _cat_colors(cats, palette)
+            data_sets = [pd.to_numeric(df_sub.loc[df_sub[x]==c, y],
+                                       errors="coerce").dropna().values for c in cats]
+            labels    = [str(c) for c in cats]
+            clrs      = [cc[c] for c in cats]
+        elif g:
+            groups    = sorted(df_sub[g].dropna().unique(), key=str)
+            cc        = _cat_colors(groups, palette)
+            data_sets = [pd.to_numeric(df_sub.loc[df_sub[g]==gr, y],
+                                       errors="coerce").dropna().values for gr in groups]
+            labels    = [str(gr) for gr in groups]
+            clrs      = [cc[gr] for gr in groups]
+        else:
+            data_sets = [pd.to_numeric(df_sub[y], errors="coerce").dropna().values]
+            labels    = [str(y)];  clrs = [_colors(3, palette)[1]]
+        valid = [(d, l, c) for d, l, c in zip(data_sets, labels, clrs) if len(d) >= 2]
+        if not valid:
+            raise ValueError("Dati insufficienti per il violino (min 2 valori per categoria).")
+        data_arr, labels, clrs = zip(*valid)
+        positions = list(range(len(data_arr)))
+        vp = ax.violinplot(list(data_arr), positions=positions,
+                           showmedians=True, showextrema=True, widths=0.7)
+        for body, c in zip(vp["bodies"], clrs):
+            body.set_facecolor(c);  body.set_edgecolor(c);  body.set_alpha(0.65)
+        for part in ("cmedians", "cmins", "cmaxes", "cbars"):
+            if part in vp:
+                vp[part].set_color("#444");  vp[part].set_linewidth(1.2)
+        ax.set_xticks(positions)
+        _smart_labels(ax, list(labels), xtick_rot)
+
+    # ── BARRE + LINEE (COMBO) ─────────────────────────────────────────────────
+    elif chart_key == "combo":
+        if not x:
+            raise ValueError("Combo richiede Asse X.")
+        agg_df, vcol = _agg_by_x(df_sub, x, y)
+        vals   = pd.to_numeric(agg_df[vcol], errors="coerce").fillna(0)
+        colors = _colors(len(agg_df), palette)
+        ax.bar(range(len(agg_df)), vals, color=colors, alpha=0.82)
+        ax.set_xticks(range(len(agg_df)))
+        _smart_labels(ax, agg_df[x].astype(str), xtick_rot)
+        if show_nums and ax.containers:
+            ax.bar_label(ax.containers[0], fmt="%.4g", fontsize=data_lbl_sz, padding=2)
+        if line_col and line_col in df_sub.columns:
+            agg_l, lcol = _agg_by_x(df_sub, x, line_col)
+            lvals = pd.to_numeric(agg_l[lcol], errors="coerce").fillna(0)
+            x_idx = {str(v): i for i, v in enumerate(agg_df[x])}
+            lx    = [x_idx.get(str(v)) for v in agg_l[x]]
+            pairs = [(xi, yv) for xi, yv in zip(lx, lvals) if xi is not None]
+            if pairs:
+                px, py = zip(*pairs)
+                ax2 = ax.twinx()
+                ax2.plot(list(px), list(py), color="#333333", linewidth=2,
+                         marker="o", markersize=5, label=str(line_col))
+                ax2.set_ylabel(str(line_col), fontsize=9)
+
+    else:
+        raise ValueError(f"Tipo grafico non supportato: {chart_key!r}")
+
+    return ax
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1203,18 +1588,24 @@ elif _sel == _TABS[2]:
 
             # ── Stato persistente Tab Grafico (pattern: value= senza key=) ────
             _g3_init = {
-                "g3_chart":   None,
-                "g3_scope":   None,
-                "g3_geo_col": "",
-                "g3_x_col":   "",
-                "g3_y_col":   "",
-                "g3_grp_col": "",
-                "g3_n_filt":  0,
-                "g3_n_sep":   0,
-                "g3_filters": [{"col": "", "type": "Valori (lista)", "val": []}
-                                for _ in range(8)],
-                "g3_seps":    [{"col": "", "mode": "cumulativo", "fval": ""}
-                                for _ in range(6)],
+                "g3_chart":     None,
+                "g3_scope":     None,
+                "g3_geo_col":   "",
+                "g3_x_col":     "",
+                "g3_y_col":     "",
+                "g3_grp_col":   "",
+                "g3_n_filt":    0,
+                "g3_n_sep":     0,
+                "g3_filters":   [{"col": "", "type": "Valori (lista)", "val": []}
+                                  for _ in range(8)],
+                "g3_seps":      [{"col": "", "mode": "cumulativo", "fval": ""}
+                                  for _ in range(6)],
+                # opzioni specifiche per tipo grafico
+                "g3_bar_horiz": False,
+                "g3_bar_3d":    False,
+                "g3_show_line": False,
+                "g3_line_col":  "",
+                "g3_podio_n":   3,
             }
             for _k, _v in _g3_init.items():
                 if _k not in ss:
@@ -1271,15 +1662,89 @@ elif _sel == _TABS[2]:
             # ── Assi (solo grafici non-mappa) ─────────────────────────────────
             if not is_map:
                 st.subheader("Assi")
-                _xi   = visible.index(ss.g3_x_col)   if ss.g3_x_col   in visible else 0
-                _yi   = visible.index(ss.g3_y_col)   if ss.g3_y_col   in visible else 0
-                _gi   = visible.index(ss.g3_grp_col) if ss.g3_grp_col in visible else 0
-                x_col = st.selectbox("Asse X", visible, index=_xi)
+                is_heatmap = (chart_key == "heatmap")
+                is_podio   = (chart_key == "podio")
+                is_funnel  = (chart_key == "funnel")
+                is_radar   = (chart_key == "radar")
+
+                # Etichette dinamiche per heatmap
+                if is_heatmap:
+                    lbl_x   = "Asse X1 — Colonne"
+                    lbl_grp = "Asse X2 — Righe (obbligatorio)"
+                elif is_podio:
+                    lbl_x   = "Asse X — Nomi (etichette)"
+                    lbl_grp = "Dettaglio aggiuntivo (opzionale)"
+                elif is_funnel:
+                    lbl_x   = "Asse X — Etichette livelli"
+                    lbl_grp = "Raggruppa / Colore (opzionale)"
+                elif is_radar:
+                    lbl_x   = "Asse X — Categorie angoli"
+                    lbl_grp = "Raggruppa / Colore (opzionale)"
+                else:
+                    lbl_x   = "Asse X"
+                    lbl_grp = "Raggruppa / Colore (opzionale)"
+
+                # Asse X
+                _xi   = visible.index(ss.g3_x_col) if ss.g3_x_col in visible else 0
+                x_col = st.selectbox(lbl_x, visible, index=_xi)
                 ss.g3_x_col = x_col
-                y_col = st.selectbox("Asse Y", visible, index=_yi)
+
+                # Asse Y — include Frequenza tranne per grafici che richiedono colonna reale
+                _y_no_freq = {"boxplot", "violin", "scatter", "histogram", "radar"}
+                if chart_key in _y_no_freq:
+                    y_opts  = visible
+                    _yi_def = visible.index(ss.g3_y_col) if ss.g3_y_col in visible else 0
+                else:
+                    y_opts  = visible[:]  # copia
+                    # inserisci Frequenza dopo il primo elemento (stringa vuota)
+                    y_opts.insert(1, _FREQ_LABEL)
+                    _y_ss   = ss.g3_y_col if ss.g3_y_col else ""
+                    _yi_def = y_opts.index(_y_ss) if _y_ss in y_opts else 0
+
+                if is_heatmap:
+                    lbl_y = "Colore / Valori (opzionale — vuoto = Frequenza)"
+                elif is_podio:
+                    lbl_y = "Asse Y — Punteggio/Valore (opzionale)"
+                elif is_funnel:
+                    lbl_y = "Asse Y — Valori (opzionale — vuoto = Frequenza)"
+                else:
+                    lbl_y = "Asse Y"
+                y_col = st.selectbox(lbl_y, y_opts, index=_yi_def)
                 ss.g3_y_col = y_col
-                grp_col = st.selectbox("Raggruppa / Colore (opzionale)", visible, index=_gi)
+
+                # Raggruppa / Asse X2
+                _gi     = visible.index(ss.g3_grp_col) if ss.g3_grp_col in visible else 0
+                grp_col = st.selectbox(lbl_grp, visible, index=_gi)
                 ss.g3_grp_col = grp_col
+
+                # ── Opzioni specifiche per tipo ────────────────────────────────
+                if chart_key == "bar":
+                    ss.g3_bar_horiz = st.checkbox("Barre orizzontali",
+                                                   value=bool(ss.g3_bar_horiz))
+                    if not (y_col == _FREQ_LABEL or not y_col):
+                        ss.g3_show_line = st.checkbox("Aggiungi linea sovrapposta",
+                                                       value=bool(ss.g3_show_line))
+
+                elif chart_key == "bar_stacked":
+                    ss.g3_bar_3d = st.checkbox("Variante 3D (Pila mattoncini)",
+                                                value=bool(ss.g3_bar_3d))
+
+                elif chart_key == "scatter":
+                    ss.g3_show_line = st.checkbox("Mostra linee di collegamento",
+                                                   value=bool(ss.g3_show_line))
+
+                elif chart_key == "combo":
+                    _lc_opts  = [""] + [c for c in list(df.columns) if c != x_col and c != y_col]
+                    _lc_val   = ss.g3_line_col if ss.g3_line_col in _lc_opts else ""
+                    _lc_i     = _lc_opts.index(_lc_val) if _lc_val in _lc_opts else 0
+                    _sel_lc   = st.selectbox("Colonna per la linea (asse Y2)",
+                                              _lc_opts, index=_lc_i)
+                    ss.g3_line_col = _sel_lc
+
+                elif chart_key == "podio":
+                    ss.g3_podio_n = int(st.number_input(
+                        "Numero di posizioni da mostrare", 1, 10,
+                        value=int(ss.g3_podio_n), step=1))
 
             # ── Personalizzazione (legge da session_state, si imposta nella tab ⚙️) ──
             title      = ss.opt_title
@@ -1514,19 +1979,33 @@ elif _sel == _TABS[2]:
 
                     # ── GRAFICI STANDARD ──────────────────────────────────────
                     else:
+                        # y_col può essere _FREQ_LABEL (stringa speciale) o colonna reale
                         x    = x_col or None
-                        y    = y_col or None
+                        y    = y_col if y_col else None
                         g    = grp_col or None
                         _dlz = int(_so.opt_data_lbl_sz)
 
                         fig, ax = plt.subplots(figsize=(_fw, _fh))
-                        _render_chart_on_ax(
+                        ax = _render_chart_on_ax(
                             ax, _df_chart, chart_key, x, y, g,
                             palette, show_nums, xtick_rot, _dlz,
+                            extra={
+                                "horiz":      bool(ss.g3_bar_horiz),
+                                "stacked_3d": bool(ss.g3_bar_3d),
+                                "show_line":  bool(ss.g3_show_line),
+                                "line_col":   ss.g3_line_col or None,
+                                "podio_n":    int(ss.g3_podio_n),
+                            },
                         )
-                        _apply_style(ax, _chart_title, xlabel, ylabel, show_leg, show_grid,
-                                     opts=style_opts)
-                        _apply_axis_settings(ax, axis_opts)
+                        # non applicare impostazioni asse su grafici con layout custom
+                        _is_3d = (chart_key == "bar_stacked" and bool(ss.g3_bar_3d))
+                        if chart_key not in _NO_AXIS_KEYS and not _is_3d:
+                            _apply_style(ax, _chart_title, xlabel, ylabel,
+                                         show_leg, show_grid, opts=style_opts)
+                            _apply_axis_settings(ax, axis_opts)
+                        else:
+                            if _chart_title:
+                                ax.set_title(_chart_title, fontsize=13, fontweight="bold")
 
                     fig.tight_layout(pad=1.5)
                     st.session_state.fig = fig
