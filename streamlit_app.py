@@ -1199,37 +1199,62 @@ elif _sel == _TABS[2]:
         left, right = st.columns([1, 2])
 
         with left:
+            ss = st.session_state
+
+            # ── Stato persistente Tab Grafico (pattern: value= senza key=) ────
+            _g3_init = {
+                "g3_chart":   None,
+                "g3_scope":   None,
+                "g3_geo_col": "",
+                "g3_x_col":   "",
+                "g3_y_col":   "",
+                "g3_grp_col": "",
+                "g3_n_filt":  0,
+                "g3_n_sep":   0,
+                "g3_filters": [{"col": "", "type": "Valori (lista)", "val": []}
+                                for _ in range(8)],
+                "g3_seps":    [{"col": "", "mode": "cumulativo", "fval": ""}
+                                for _ in range(6)],
+            }
+            for _k, _v in _g3_init.items():
+                if _k not in ss:
+                    ss[_k] = _v
+
             # ── Tipo grafico ──────────────────────────────────────────────────
             st.subheader("Tipo di grafico")
             chart_labels = [t[0] for t in CHART_TYPES]
             chart_keys   = [t[1] for t in CHART_TYPES]
-            chart_label  = st.selectbox("", chart_labels, label_visibility="collapsed", key="sel_chart_type")
+            _cl_idx      = chart_labels.index(ss.g3_chart) if ss.g3_chart in chart_labels else 0
+            chart_label  = st.selectbox("", chart_labels, index=_cl_idx, label_visibility="collapsed")
+            ss.g3_chart  = chart_label
             chart_key    = chart_keys[chart_labels.index(chart_label)]
             is_map       = chart_key in MAP_KEYS
 
-            # ── Opzioni mappa (solo per grafici mappa) ────────────────────────
+            # ── Opzioni mappa ─────────────────────────────────────────────────
             if is_map:
                 st.subheader("Impostazioni mappa")
                 if not GEO_OK:
                     st.error("geopandas non installato — le mappe non sono disponibili.")
-                scope_label = st.selectbox("Ambito mappa", [s[0] for s in MAP_SCOPES])
+                _sc_opts    = [s[0] for s in MAP_SCOPES]
+                _sc_idx     = _sc_opts.index(ss.g3_scope) if ss.g3_scope in _sc_opts else 0
+                scope_label = st.selectbox("Ambito mappa", _sc_opts, index=_sc_idx)
+                ss.g3_scope = scope_label
                 scope_key   = MAP_SCOPE_KEYS[scope_label]
+                _geo_opts   = [""] + list(df.columns)
+                _geo_idx    = _geo_opts.index(ss.g3_geo_col) if ss.g3_geo_col in _geo_opts else 0
                 geo_col     = st.selectbox(
-                    "Colonna geo (nomi geografici nel tuo file)",
-                    [""] + list(df.columns),
-                    help="Seleziona la colonna che contiene i nomi delle aree geografiche"
+                    "Colonna geo (nomi geografici nel tuo file)", _geo_opts, index=_geo_idx,
+                    help="Seleziona la colonna che contiene i nomi delle aree geografiche",
                 )
+                ss.g3_geo_col = geo_col
                 if chart_key == "band_map":
-                    val_col_map = st.selectbox("Valore (opzionale, per proporzionare bande)", dipend)
-                    grp_col_map = st.selectbox("Categoria colore (obbligatorio)", all_col)
-                    band_orient = st.radio(
-                        "Direzione bande",
-                        ["Verticale (→)", "Orizzontale (↑)"],
-                        horizontal=True,
+                    val_col_map     = st.selectbox("Valore (opzionale, per proporzionare bande)", dipend)
+                    grp_col_map     = st.selectbox("Categoria colore (obbligatorio)", all_col)
+                    band_orient     = st.radio(
+                        "Direzione bande", ["Verticale (→)", "Orizzontale (↑)"], horizontal=True,
                     )
                     band_equal_area = st.checkbox(
-                        "Area proporzionale al valore",
-                        value=False,
+                        "Area proporzionale al valore", value=False,
                         help=(
                             "Se attivo: l'area della banda nel poligono è proporzionale al valore "
                             "(ricerca binaria). Se disattivo: la larghezza/altezza del bounding box "
@@ -1246,21 +1271,27 @@ elif _sel == _TABS[2]:
             # ── Assi (solo grafici non-mappa) ─────────────────────────────────
             if not is_map:
                 st.subheader("Assi")
-                x_col   = st.selectbox("Asse X", indip, key="sel_x_col")
-                y_col   = st.selectbox("Asse Y", dipend, key="sel_y_col")
-                grp_col = st.selectbox("Raggruppa / Colore (opzionale)", all_col, key="sel_grp_col")
+                _xi   = visible.index(ss.g3_x_col)   if ss.g3_x_col   in visible else 0
+                _yi   = visible.index(ss.g3_y_col)   if ss.g3_y_col   in visible else 0
+                _gi   = visible.index(ss.g3_grp_col) if ss.g3_grp_col in visible else 0
+                x_col = st.selectbox("Asse X", visible, index=_xi)
+                ss.g3_x_col = x_col
+                y_col = st.selectbox("Asse Y", visible, index=_yi)
+                ss.g3_y_col = y_col
+                grp_col = st.selectbox("Raggruppa / Colore (opzionale)", visible, index=_gi)
+                ss.g3_grp_col = grp_col
 
             # ── Personalizzazione (legge da session_state, si imposta nella tab ⚙️) ──
-            title      = st.session_state.opt_title
-            palette_nm = st.session_state.opt_palette_nm
+            title      = ss.opt_title
+            palette_nm = ss.opt_palette_nm
             palette    = PALETTES.get(palette_nm, list(PALETTES.values())[0])
-            show_leg   = st.session_state.opt_show_leg
+            show_leg   = ss.opt_show_leg
             if not is_map:
-                xlabel    = st.session_state.opt_xlabel
-                ylabel    = st.session_state.opt_ylabel
-                show_grid = st.session_state.opt_show_grid
-                show_nums = st.session_state.opt_show_nums
-                xtick_rot = st.session_state.opt_xtick_rot
+                xlabel    = ss.opt_xlabel
+                ylabel    = ss.opt_ylabel
+                show_grid = ss.opt_show_grid
+                show_nums = ss.opt_show_nums
+                xtick_rot = ss.opt_xtick_rot
             else:
                 xlabel = ylabel = ""
                 show_grid = show_nums = False
@@ -1268,55 +1299,81 @@ elif _sel == _TABS[2]:
 
             # ── Filtri ────────────────────────────────────────────────────────
             with st.expander("🔍  Filtri"):
-                n_filters = st.number_input("Numero di filtri", 0, 8, 0, step=1, key="n_filters")
+                _nf       = int(st.number_input("Numero di filtri", 0, 8, value=int(ss.g3_n_filt), step=1))
+                ss.g3_n_filt = _nf
                 df_filt   = df.copy()
+                _FC_TYPES = ["Valori (lista)", "Contiene", "Non contiene", "Num ≥", "Num ≤"]
+                _fc_opts  = [""] + list(df.columns)
 
-                for fi in range(int(n_filters)):
+                for fi in range(_nf):
+                    _fs = ss.g3_filters[fi]
                     st.markdown(f"**Filtro {fi + 1}**")
                     fc1, fc2 = st.columns(2)
                     with fc1:
-                        filt_col = st.selectbox("Colonna", [""] + list(df.columns), key=f"fc_{fi}")
+                        _fci     = _fc_opts.index(_fs["col"]) if _fs["col"] in _fc_opts else 0
+                        filt_col = st.selectbox("Colonna", _fc_opts, index=_fci)
+                        _fs["col"] = filt_col
                     with fc2:
-                        filt_type = st.selectbox(
-                            "Tipo",
-                            ["Valori (lista)", "Contiene", "Non contiene", "Num ≥", "Num ≤"],
-                            key=f"ft_{fi}",
-                        )
+                        _fti      = _FC_TYPES.index(_fs["type"]) if _fs["type"] in _FC_TYPES else 0
+                        filt_type = st.selectbox("Tipo", _FC_TYPES, index=_fti)
+                        _fs["type"] = filt_type
                     if filt_col and filt_col in df.columns:
                         if filt_type == "Valori (lista)":
-                            uniq = sorted(df_filt[filt_col].dropna().unique(), key=str)
-                            sel  = st.multiselect("Valori da includere", uniq, key=f"fv_{fi}")
+                            uniq  = sorted(df_filt[filt_col].dropna().unique(), key=str)
+                            _fdef = [v for v in (_fs.get("val") or []) if v in uniq]
+                            sel   = st.multiselect("Valori da includere", uniq, default=_fdef)
+                            _fs["val"] = sel
                             if sel:
                                 df_filt = df_filt[df_filt[filt_col].astype(str).isin([str(v) for v in sel])]
                         elif filt_type in ("Contiene", "Non contiene"):
-                            txt = st.text_input("Testo", key=f"fp_{fi}")
+                            _fv  = str(_fs.get("val") or "") if not isinstance(_fs.get("val"), list) else ""
+                            txt  = st.text_input("Testo", value=_fv)
+                            _fs["val"] = txt
                             if txt:
-                                mask = df_filt[filt_col].astype(str).str.contains(txt, case=False, na=False)
+                                mask    = df_filt[filt_col].astype(str).str.contains(txt, case=False, na=False)
                                 df_filt = df_filt[mask if filt_type == "Contiene" else ~mask]
                         elif filt_type == "Num ≥":
-                            val = st.number_input("Valore minimo", key=f"fp_{fi}", value=0.0)
+                            _fv  = float(_fs["val"]) if isinstance(_fs.get("val"), (int, float)) else 0.0
+                            val  = st.number_input("Valore minimo", value=_fv)
+                            _fs["val"] = val
                             df_filt = df_filt[pd.to_numeric(df_filt[filt_col], errors="coerce") >= val]
                         elif filt_type == "Num ≤":
-                            val = st.number_input("Valore massimo", key=f"fp_{fi}", value=0.0)
+                            _fv  = float(_fs["val"]) if isinstance(_fs.get("val"), (int, float)) else 0.0
+                            val  = st.number_input("Valore massimo", value=_fv)
+                            _fs["val"] = val
                             df_filt = df_filt[pd.to_numeric(df_filt[filt_col], errors="coerce") <= val]
                     st.caption(f"→ {len(df_filt):,} righe dopo questo filtro")
+                    ss.g3_filters[fi] = _fs
 
             # ── Separa ────────────────────────────────────────────────────────
-            sep_col = ""
-            if not is_map:
-                with st.expander("✂️  Separa"):
-                    _n_sep_cfg = int(st.number_input(
-                        "Numero di colonne", 0, 6, 0, step=1, key="n_sep_cfg"
-                    ))
-                    _vis_only = [c for c in visible if c]
-                    for _si in range(_n_sep_cfg):
-                        _sca, _scb = st.columns(2)
-                        with _sca:
-                            _sc = st.selectbox("Colonna", [""] + _vis_only, key=f"sc_{_si}")
-                        with _scb:
-                            _sm = st.selectbox("Modalità", ["ignora", "separa"], key=f"sm_{_si}")
-                        if _sc and _sm == "separa" and not sep_col:
-                            sep_col = _sc
+            sep_col   = ""
+            _SEP_MODES = ["cumulativo", "separa", "valore fisso"]
+            with st.expander("✂️  Separa"):
+                _ns      = int(st.number_input("Numero di colonne", 0, 6, value=int(ss.g3_n_sep), step=1))
+                ss.g3_n_sep = _ns
+                _vis_only   = [c for c in visible if c]
+                _sv_opts    = [""] + _vis_only
+                for _si in range(_ns):
+                    _sp = ss.g3_seps[_si]
+                    _sca, _scb = st.columns(2)
+                    with _sca:
+                        _sci = _sv_opts.index(_sp["col"]) if _sp["col"] in _sv_opts else 0
+                        _sc  = st.selectbox("Colonna", _sv_opts, index=_sci)
+                        _sp["col"] = _sc
+                    with _scb:
+                        _smi = _SEP_MODES.index(_sp["mode"]) if _sp["mode"] in _SEP_MODES else 0
+                        _sm  = st.selectbox("Modalità", _SEP_MODES, index=_smi)
+                        _sp["mode"] = _sm
+                    if _sc and _sm == "separa" and not sep_col:
+                        sep_col = _sc
+                    elif _sc and _sm == "valore fisso" and _sc in df_filt.columns:
+                        _fv_opts = [""] + sorted([str(v) for v in df_filt[_sc].dropna().unique()], key=str)
+                        _fvi     = _fv_opts.index(_sp["fval"]) if _sp["fval"] in _fv_opts else 0
+                        _fv      = st.selectbox("Valore fisso", _fv_opts, index=_fvi)
+                        _sp["fval"] = _fv
+                        if _fv:
+                            df_filt = df_filt[df_filt[_sc].astype(str) == _fv]
+                    ss.g3_seps[_si] = _sp
 
             gen = st.button("▶  Genera grafico", type="primary", use_container_width=True)
 
