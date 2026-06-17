@@ -1203,7 +1203,7 @@ elif _sel == _TABS[2]:
             st.subheader("Tipo di grafico")
             chart_labels = [t[0] for t in CHART_TYPES]
             chart_keys   = [t[1] for t in CHART_TYPES]
-            chart_label  = st.selectbox("", chart_labels, label_visibility="collapsed")
+            chart_label  = st.selectbox("", chart_labels, label_visibility="collapsed", key="sel_chart_type")
             chart_key    = chart_keys[chart_labels.index(chart_label)]
             is_map       = chart_key in MAP_KEYS
 
@@ -1246,9 +1246,9 @@ elif _sel == _TABS[2]:
             # ── Assi (solo grafici non-mappa) ─────────────────────────────────
             if not is_map:
                 st.subheader("Assi")
-                x_col   = st.selectbox("Asse X", indip)
-                y_col   = st.selectbox("Asse Y", dipend)
-                grp_col = st.selectbox("Raggruppa / Colore (opzionale)", all_col)
+                x_col   = st.selectbox("Asse X", indip, key="sel_x_col")
+                y_col   = st.selectbox("Asse Y", dipend, key="sel_y_col")
+                grp_col = st.selectbox("Raggruppa / Colore (opzionale)", all_col, key="sel_grp_col")
 
             # ── Personalizzazione (legge da session_state, si imposta nella tab ⚙️) ──
             title      = st.session_state.opt_title
@@ -1268,7 +1268,7 @@ elif _sel == _TABS[2]:
 
             # ── Filtri ────────────────────────────────────────────────────────
             with st.expander("🔍  Filtri"):
-                n_filters = st.number_input("Numero di filtri", 0, 8, 0, step=1)
+                n_filters = st.number_input("Numero di filtri", 0, 8, 0, step=1, key="n_filters")
                 df_filt   = df.copy()
 
                 for fi in range(int(n_filters)):
@@ -1301,21 +1301,22 @@ elif _sel == _TABS[2]:
                             df_filt = df_filt[pd.to_numeric(df_filt[filt_col], errors="coerce") <= val]
                     st.caption(f"→ {len(df_filt):,} righe dopo questo filtro")
 
-            # ── Separa (pannelli) ──────────────────────────────────────────────
+            # ── Separa ────────────────────────────────────────────────────────
             sep_col = ""
-            sep_max = 9
             if not is_map:
-                with st.expander("✂️  Separa (pannelli)"):
-                    sep_col = st.selectbox(
-                        "Colonna per separare in pannelli",
-                        visible,
-                        key="sep_col_sel",
-                    )
-                    if sep_col:
-                        sep_max = int(st.number_input(
-                            "Max pannelli", min_value=2, max_value=16, value=9, step=1,
-                            key="sep_max_inp",
-                        ))
+                with st.expander("✂️  Separa"):
+                    _n_sep_cfg = int(st.number_input(
+                        "Numero di colonne", 0, 6, 0, step=1, key="n_sep_cfg"
+                    ))
+                    _vis_only = [c for c in visible if c]
+                    for _si in range(_n_sep_cfg):
+                        _sca, _scb = st.columns(2)
+                        with _sca:
+                            _sc = st.selectbox("Colonna", [""] + _vis_only, key=f"sc_{_si}")
+                        with _scb:
+                            _sm = st.selectbox("Modalità", ["ignora", "separa"], key=f"sm_{_si}")
+                        if _sc and _sm == "separa" and not sep_col:
+                            sep_col = _sc
 
             gen = st.button("▶  Genera grafico", type="primary", use_container_width=True)
 
@@ -1366,12 +1367,45 @@ elif _sel == _TABS[2]:
         }
 
         with right:
-            if gen:
+            # ── Navigazione Separa ─────────────────────────────────────────────
+            _df_chart    = df_filt
+            _chart_title = title
+            do_render    = gen
+
+            if sep_col and sep_col in df_filt.columns:
+                _sv  = sorted(df_filt[sep_col].dropna().unique(), key=str)
+                _nsv = len(_sv)
+                # Resetta indice quando la colonna separa cambia
+                if st.session_state.get("_sep_col_last") != sep_col:
+                    st.session_state["_sep_idx"]      = 0
+                    st.session_state["_sep_col_last"] = sep_col
+                _idx = max(0, min(int(st.session_state.get("_sep_idx", 0)), _nsv - 1))
+                st.session_state["_sep_idx"] = _idx
+
+                _nc1, _nc2, _nc3 = st.columns([1, 6, 1])
+                with _nc1:
+                    if st.button("◀", disabled=(_idx == 0), key="sep_btn_prev"):
+                        st.session_state["_sep_idx"] = max(0, _idx - 1)
+                        do_render = True
+                with _nc2:
+                    _cur_v = _sv[st.session_state["_sep_idx"]]
+                    st.markdown(
+                        f"**{st.session_state['_sep_idx'] + 1} / {_nsv}**"
+                        f" — *{sep_col}*: **{_cur_v}**"
+                    )
+                with _nc3:
+                    if st.button("▶", disabled=(_idx >= _nsv - 1), key="sep_btn_next"):
+                        st.session_state["_sep_idx"] = min(_nsv - 1, _idx + 1)
+                        do_render = True
+
+                _cur_v       = _sv[st.session_state["_sep_idx"]]
+                _df_chart    = df_filt[df_filt[sep_col].astype(str) == str(_cur_v)]
+                _chart_title = title or f"{sep_col}: {_cur_v}"
+
+            if do_render:
                 try:
-                    # Dimensione figura
                     _fw = float(st.session_state.opt_fig_w)
                     _fh = float(st.session_state.opt_fig_h)
-                    fig, ax = plt.subplots(figsize=(_fw, _fh))
 
                     if not is_map and palette:
                         plt.rcParams["axes.prop_cycle"] = plt.cycler(
@@ -1385,86 +1419,57 @@ elif _sel == _TABS[2]:
                         if not geo_col:
                             raise ValueError("Seleziona la colonna geo.")
 
+                        fig, ax = plt.subplots(figsize=(_fw, _fh))
                         gdf = _load_geo(scope_key)
                         if gdf is None:
-                            raise ValueError(f"Impossibile caricare le geometrie per '{scope_label}'.")
+                            raise ValueError(
+                                f"Impossibile caricare le geometrie per '{scope_label}'."
+                            )
 
                         if chart_key == "choropleth":
                             if not val_col_map:
-                                raise ValueError("Seleziona il Valore numerico per la mappa coropletica.")
-                            _plot_choropleth(fig, ax, df_filt, geo_col, val_col_map,
-                                             gdf, palette, title)
+                                raise ValueError(
+                                    "Seleziona il Valore numerico per la mappa coropletica."
+                                )
+                            _plot_choropleth(fig, ax, _df_chart, geo_col, val_col_map,
+                                             gdf, palette, _chart_title)
 
                         elif chart_key == "bubble_map":
-                            _plot_bubble_map(fig, ax, df_filt, geo_col,
+                            _plot_bubble_map(fig, ax, _df_chart, geo_col,
                                              val_col_map or None,
                                              grp_col_map or None,
-                                             gdf, palette, title, show_leg)
+                                             gdf, palette, _chart_title, show_leg)
 
                         elif chart_key == "band_map":
                             _orient = "Verticale" if band_orient.startswith("V") else "Orizzontale"
-                            _plot_band_map(fig, ax, df_filt, geo_col,
+                            _plot_band_map(fig, ax, _df_chart, geo_col,
                                            grp_col_map or None,
                                            val_col_map or None,
-                                           gdf, palette, title, show_leg,
+                                           gdf, palette, _chart_title, show_leg,
                                            orientation=_orient,
                                            equal_area=band_equal_area)
 
                         elif chart_key == "pin_map":
-                            _plot_pin_map(fig, ax, df_filt, geo_col,
+                            _plot_pin_map(fig, ax, _df_chart, geo_col,
                                           val_col_map or None,
                                           grp_col_map or None,
-                                          gdf, palette, title, show_leg)
+                                          gdf, palette, _chart_title, show_leg)
 
                     # ── GRAFICI STANDARD ──────────────────────────────────────
                     else:
-                        x = x_col or None
-                        y = y_col or None
-                        g = grp_col or None
+                        x    = x_col or None
+                        y    = y_col or None
+                        g    = grp_col or None
                         _dlz = int(_so.opt_data_lbl_sz)
 
-                        if sep_col and sep_col in df_filt.columns:
-                            # ── Modalità pannelli (Separa) ────────────────────
-                            vals_sep = sorted(
-                                df_filt[sep_col].dropna().unique(), key=str
-                            )[:sep_max]
-                            n = len(vals_sep)
-                            ncols = min(3, n)
-                            nrows = (n + ncols - 1) // ncols
-                            fig, axs = plt.subplots(
-                                nrows, ncols,
-                                figsize=(_fw * ncols / 1.5, _fh * nrows / 1.5),
-                                squeeze=False,
-                            )
-                            for idx_p, val_p in enumerate(vals_sep):
-                                ax_p = axs[idx_p // ncols][idx_p % ncols]
-                                df_p = df_filt[
-                                    df_filt[sep_col].astype(str) == str(val_p)
-                                ]
-                                _render_chart_on_ax(
-                                    ax_p, df_p, chart_key, x, y, g,
-                                    palette, show_nums, xtick_rot, _dlz,
-                                )
-                                _apply_style(
-                                    ax_p,
-                                    f"{sep_col} = {val_p}",
-                                    xlabel, ylabel, show_leg, show_grid,
-                                    opts=style_opts,
-                                )
-                                _apply_axis_settings(ax_p, axis_opts)
-                            # Nasconde celle vuote se n non è multiplo di ncols
-                            for idx_p in range(n, nrows * ncols):
-                                axs[idx_p // ncols][idx_p % ncols].set_visible(False)
-                        else:
-                            # ── Grafico singolo ───────────────────────────────
-                            fig, ax = plt.subplots(figsize=(_fw, _fh))
-                            _render_chart_on_ax(
-                                ax, df_filt, chart_key, x, y, g,
-                                palette, show_nums, xtick_rot, _dlz,
-                            )
-                            _apply_style(ax, title, xlabel, ylabel, show_leg, show_grid,
-                                         opts=style_opts)
-                            _apply_axis_settings(ax, axis_opts)
+                        fig, ax = plt.subplots(figsize=(_fw, _fh))
+                        _render_chart_on_ax(
+                            ax, _df_chart, chart_key, x, y, g,
+                            palette, show_nums, xtick_rot, _dlz,
+                        )
+                        _apply_style(ax, _chart_title, xlabel, ylabel, show_leg, show_grid,
+                                     opts=style_opts)
+                        _apply_axis_settings(ax, axis_opts)
 
                     fig.tight_layout(pad=1.5)
                     st.session_state.fig = fig
