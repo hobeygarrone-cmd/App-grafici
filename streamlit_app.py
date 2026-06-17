@@ -829,6 +829,178 @@ def _plot_pin_map(fig, ax, df_filt, geo_col, val_col, grp_col, gdf, palette, tit
     fig.subplots_adjust(left=0.01, right=0.99, top=0.97, bottom=0.02)
 
 
+def _render_chart_on_ax(ax, df_sub, chart_key, x, y, g,
+                         palette, show_nums, xtick_rot, data_lbl_sz):
+    """Renderizza un grafico standard su ax — usato sia in modalità singola sia per i pannelli Separa."""
+    if chart_key == "bar_v":
+        if x and y and g:
+            agg   = _agg(df_sub, x, y, g)
+            pivot = agg.pivot_table(index=x, columns=g, values=y, aggfunc="sum").fillna(0)
+            pivot.plot.bar(ax=ax, color=_colors(len(pivot.columns), palette))
+            _smart_labels(ax, pivot.index, xtick_rot)
+            if show_nums:
+                for container in ax.containers:
+                    ax.bar_label(container, fmt="%.4g", fontsize=data_lbl_sz, padding=2)
+        elif x and y:
+            agg  = _agg(df_sub, x, y)
+            vals = pd.to_numeric(agg[y], errors="coerce").fillna(0)
+            ax.bar(range(len(agg)), vals, color=_colors(len(agg), palette))
+            ax.set_xticks(range(len(agg)))
+            _smart_labels(ax, agg[x].astype(str), xtick_rot)
+            if show_nums:
+                ax.bar_label(ax.containers[0], fmt="%.4g", fontsize=data_lbl_sz, padding=2)
+        elif x:
+            vc = df_sub[x].value_counts()
+            ax.bar(range(len(vc)), vc.values, color=_colors(len(vc), palette))
+            ax.set_xticks(range(len(vc)))
+            _smart_labels(ax, vc.index.astype(str), xtick_rot)
+            if show_nums:
+                ax.bar_label(ax.containers[0], fmt="%d", fontsize=data_lbl_sz, padding=2)
+        else:
+            raise ValueError("Seleziona almeno Asse X.")
+
+    elif chart_key == "bar_h":
+        if x and y and g:
+            agg   = _agg(df_sub, x, y, g)
+            pivot = agg.pivot_table(index=x, columns=g, values=y, aggfunc="sum").fillna(0)
+            pivot.plot.barh(ax=ax, color=_colors(len(pivot.columns), palette))
+        elif x and y:
+            agg  = _agg(df_sub, x, y)
+            vals = pd.to_numeric(agg[y], errors="coerce").fillna(0)
+            ax.barh(range(len(agg)), vals, color=_colors(len(agg), palette))
+            ax.set_yticks(range(len(agg)))
+            ax.set_yticklabels(agg[x].astype(str), fontsize=7)
+        elif x:
+            vc = df_sub[x].value_counts()
+            ax.barh(range(len(vc)), vc.values, color=_colors(len(vc), palette))
+            ax.set_yticks(range(len(vc)))
+            ax.set_yticklabels(vc.index.astype(str), fontsize=7)
+        else:
+            raise ValueError("Seleziona almeno Asse X.")
+
+    elif chart_key == "bar_stacked":
+        if not (x and y and g):
+            raise ValueError("Barre stacked richiedono Asse X, Asse Y e Raggruppa.")
+        agg   = _agg(df_sub, x, y, g)
+        pivot = agg.pivot_table(index=x, columns=g, values=y, aggfunc="sum").fillna(0)
+        pivot.plot.bar(ax=ax, stacked=True, color=_colors(len(pivot.columns), palette))
+        _smart_labels(ax, pivot.index, xtick_rot)
+
+    elif chart_key == "line":
+        if not (x and y):
+            raise ValueError("Seleziona Asse X e Asse Y.")
+        x_all = sorted(df_sub[x].dropna().unique(), key=str)
+        x_pos = {str(v): i for i, v in enumerate(x_all)}
+        if g:
+            groups = sorted(df_sub[g].dropna().unique(), key=str)
+            colors = _colors(len(groups), palette)
+            for grp, col_ in zip(groups, colors):
+                sub   = df_sub[df_sub[g] == grp].sort_values(x)
+                xvals = [x_pos.get(str(v)) for v in sub[x]]
+                yvals = pd.to_numeric(sub[y], errors="coerce").tolist()
+                pairs = [(xv, yv) for xv, yv in zip(xvals, yvals)
+                         if xv is not None and not pd.isna(yv)]
+                if pairs:
+                    xs_, ys_ = zip(*pairs)
+                    ax.plot(list(xs_), list(ys_), marker="o", markersize=4,
+                            label=str(grp), color=col_)
+        else:
+            agg   = df_sub.groupby(x, sort=False)[y].sum().reset_index()
+            xvals = [x_pos.get(str(v)) for v in agg[x]]
+            yvals = pd.to_numeric(agg[y], errors="coerce").tolist()
+            pairs = [(xv, yv) for xv, yv in zip(xvals, yvals)
+                     if xv is not None and not pd.isna(yv)]
+            if pairs:
+                xs_, ys_ = zip(*pairs)
+                ax.plot(list(xs_), list(ys_), marker="o", markersize=4)
+        ax.set_xticks(range(len(x_all)))
+        _smart_labels(ax, [str(v) for v in x_all], xtick_rot)
+
+    elif chart_key == "scatter":
+        if not (x and y):
+            raise ValueError("Seleziona Asse X e Asse Y.")
+        if g:
+            groups = sorted(df_sub[g].dropna().unique(), key=str)
+            colors = _colors(len(groups), palette)
+            for grp, col_ in zip(groups, colors):
+                sub = df_sub[df_sub[g] == grp]
+                ax.scatter(pd.to_numeric(sub[x], errors="coerce"),
+                           pd.to_numeric(sub[y], errors="coerce"),
+                           label=str(grp), alpha=0.7, s=30, color=col_)
+        else:
+            ax.scatter(pd.to_numeric(df_sub[x], errors="coerce"),
+                       pd.to_numeric(df_sub[y], errors="coerce"),
+                       alpha=0.7, s=30, c=[_get_cmap(palette, fallback="tab10")(0)])
+
+    elif chart_key == "histogram":
+        col_ = y or x
+        if not col_:
+            raise ValueError("Seleziona una colonna numerica.")
+        if g:
+            groups = sorted(df_sub[g].dropna().unique(), key=str)
+            colors = _colors(len(groups), palette)
+            for grp, col_c in zip(groups, colors):
+                vals = pd.to_numeric(
+                    df_sub.loc[df_sub[g] == grp, col_], errors="coerce"
+                ).dropna()
+                ax.hist(vals, bins=20, alpha=0.55, label=str(grp), color=col_c)
+        else:
+            vals = pd.to_numeric(df_sub[col_], errors="coerce").dropna()
+            ax.hist(vals, bins=20, color=_get_cmap(palette, fallback="tab10")(0))
+
+    elif chart_key == "pie":
+        if y and x:
+            vc = df_sub.groupby(x)[y].sum().sort_values(ascending=False)
+        elif x:
+            vc = df_sub[x].value_counts()
+        elif y:
+            vc = df_sub[y].value_counts()
+        else:
+            raise ValueError("Seleziona almeno una colonna.")
+        top = vc.head(12)
+        _, _, autotexts = ax.pie(
+            top.values,
+            labels=[str(l) for l in top.index],
+            autopct="%1.1f%%", startangle=90,
+            colors=_colors(len(top), palette),
+        )
+        for t in autotexts:
+            t.set_fontsize(8)
+        ax.axis("equal")
+
+    elif chart_key == "heatmap":
+        if not (x and y):
+            raise ValueError("Seleziona Asse X (righe) e Asse Y (colonne).")
+        val_col = g or None
+        if val_col and val_col in df_sub.columns:
+            piv = df_sub.pivot_table(index=x, columns=y, values=val_col, aggfunc="mean")
+        else:
+            piv = df_sub.pivot_table(index=x, columns=y, aggfunc="size", fill_value=0)
+        im = ax.imshow(piv.values, aspect="auto", cmap=_get_cmap(palette, fallback="YlOrRd"))
+        ax.set_xticks(range(len(piv.columns)))
+        ax.set_xticklabels(piv.columns, rotation=45, ha="right", fontsize=7)
+        ax.set_yticks(range(len(piv.index)))
+        ax.set_yticklabels(piv.index, fontsize=7)
+        ax.get_figure().colorbar(im, ax=ax, shrink=0.7)
+
+    elif chart_key == "boxplot":
+        if not y:
+            raise ValueError("Seleziona Asse Y (colonna numerica).")
+        if x:
+            cats = sorted(df_sub[x].dropna().unique(), key=str)
+            data = [pd.to_numeric(
+                df_sub.loc[df_sub[x] == c, y], errors="coerce"
+            ).dropna() for c in cats]
+            bp = ax.boxplot(data, patch_artist=True)
+            for patch, col_ in zip(bp["boxes"], _colors(len(cats), palette)):
+                patch.set_facecolor(col_)
+            ax.set_xticks(range(1, len(cats) + 1))
+            _smart_labels(ax, [str(c) for c in cats], xtick_rot)
+        else:
+            vals = pd.to_numeric(df_sub[y], errors="coerce").dropna()
+            ax.boxplot(vals, patch_artist=True)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # NAVIGAZIONE  (radio orizzontale — permette st.rerun() per cambiare pagina)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -935,10 +1107,7 @@ if _sel == _TABS[0]:
 
             st.success(f"✓  {label}  —  {len(df_new):,} righe × {len(df_new.columns)} colonne")
             st.session_state.df = df_new
-            st.session_state.col_roles = {
-                c: ("dipend" if _is_num(df_new[c]) else "indip")
-                for c in df_new.columns
-            }
+            st.session_state.col_roles = {c: "mostra" for c in df_new.columns}
             st.session_state.fig = None
 
         except Exception as e:
@@ -959,62 +1128,54 @@ elif _sel == _TABS[1]:
     if df is None:
         st.info("Carica prima un file nella sezione Dati.")
     else:
-        st.subheader("Ruolo di ogni colonna")
-        st.caption(
-            "**indip** = variabile indipendente (Asse X, categorie)  |  "
-            "**dipend** = variabile dipendente (Asse Y, valori)  |  "
-            "**ignora** = escludi dal grafico"
-        )
+        st.subheader("Colonne visibili")
+        st.caption("**Mostra** = colonna disponibile per assi e filtri  |  **Ignora** = esclusa")
 
         roles        = st.session_state.col_roles.copy()
-        ROLE_OPTIONS = ["indip", "dipend", "ignora"]
+        ROLE_OPTIONS = ["mostra", "ignora"]
 
         # ── Azioni rapide ──────────────────────────────────────────────────────
-        ca, cb, cc_ = st.columns([1, 2, 1])
-        with ca:
-            if st.button("Auto-rileva", use_container_width=True,
-                         help="Assegna 'dipend' alle colonne numeriche, 'indip' alle altre"):
+        qa, qb = st.columns(2)
+        with qa:
+            if st.button("✅  Mostra tutto", use_container_width=True):
                 for col in df.columns:
-                    roles[col] = "dipend" if _is_num(df[col]) else "indip"
+                    roles[col] = "mostra"
                 st.session_state.col_roles = roles
                 st.rerun()
-        with cb:
-            bulk = st.selectbox(
-                "Assegna a tutti:", ["", "indip", "dipend", "ignora"],
-                key="bulk_role", label_visibility="collapsed",
-            )
-        with cc_:
-            if st.button("Applica", use_container_width=True) and bulk:
+        with qb:
+            if st.button("🚫  Ignora tutto", use_container_width=True):
                 for col in df.columns:
-                    roles[col] = bulk
+                    roles[col] = "ignora"
                 st.session_state.col_roles = roles
                 st.rerun()
 
         st.divider()
 
-        # ── Selettori per colonna ──────────────────────────────────────────────
+        # ── Selettori per colonna (griglia 4 per riga) ────────────────────────
         N_COLS   = 4
         col_list = list(df.columns)
         for row_start in range(0, len(col_list), N_COLS):
             row_widgets = st.columns(N_COLS)
             for j, col_name in enumerate(col_list[row_start : row_start + N_COLS]):
                 with row_widgets[j]:
-                    cur      = roles.get(col_name, "indip")
-                    idx      = ROLE_OPTIONS.index(cur) if cur in ROLE_OPTIONS else 0
-                    tipo     = "numerico" if _is_num(df[col_name]) else "testo"
+                    cur  = roles.get(col_name, "mostra")
+                    if cur not in ROLE_OPTIONS:
+                        cur = "mostra"
+                    icon = "🔢" if _is_num(df[col_name]) else "🔤"
                     new_role = st.selectbox(
-                        col_name, ROLE_OPTIONS, index=idx,
-                        key=f"role_{col_name}", help=f"Tipo: {tipo}",
+                        f"{icon} {col_name}", ROLE_OPTIONS,
+                        index=ROLE_OPTIONS.index(cur),
+                        key=f"role_{col_name}",
                     )
                     roles[col_name] = new_role
 
         st.session_state.col_roles = roles
 
-        show_cols = [c for c, r in roles.items() if r != "ignora"]
+        show_cols = [c for c, r in roles.items() if r == "mostra"]
         if show_cols:
             st.divider()
             st.subheader("Anteprima dati")
-            st.data_editor(df[show_cols].head(300), use_container_width=True, key="preview_editor")
+            st.dataframe(df[show_cols].head(300), use_container_width=True)
 
         st.divider()
         if st.button("📊  Vai al Grafico →", use_container_width=True):
@@ -1030,9 +1191,10 @@ elif _sel == _TABS[2]:
         st.info("Carica prima un file nella sezione Dati.")
     else:
         roles   = st.session_state.col_roles
-        indip   = [""] + [c for c, r in roles.items() if r == "indip"]
-        dipend  = [""] + [c for c, r in roles.items() if r == "dipend"]
-        all_col = [""] + [c for c, r in roles.items() if r != "ignora"]
+        visible = [""] + [c for c, r in roles.items() if r == "mostra"]
+        indip   = visible
+        dipend  = visible
+        all_col = visible
 
         left, right = st.columns([1, 2])
 
@@ -1084,8 +1246,8 @@ elif _sel == _TABS[2]:
             # ── Assi (solo grafici non-mappa) ─────────────────────────────────
             if not is_map:
                 st.subheader("Assi")
-                x_col   = st.selectbox("Asse X (indip / categorie)", indip)
-                y_col   = st.selectbox("Asse Y (dipend / valori)", dipend)
+                x_col   = st.selectbox("Asse X", indip)
+                y_col   = st.selectbox("Asse Y", dipend)
                 grp_col = st.selectbox("Raggruppa / Colore (opzionale)", all_col)
 
             # ── Personalizzazione (legge da session_state, si imposta nella tab ⚙️) ──
@@ -1138,6 +1300,22 @@ elif _sel == _TABS[2]:
                             val = st.number_input("Valore massimo", key=f"fp_{fi}", value=0.0)
                             df_filt = df_filt[pd.to_numeric(df_filt[filt_col], errors="coerce") <= val]
                     st.caption(f"→ {len(df_filt):,} righe dopo questo filtro")
+
+            # ── Separa (pannelli) ──────────────────────────────────────────────
+            sep_col = ""
+            sep_max = 9
+            if not is_map:
+                with st.expander("✂️  Separa (pannelli)"):
+                    sep_col = st.selectbox(
+                        "Colonna per separare in pannelli",
+                        visible,
+                        key="sep_col_sel",
+                    )
+                    if sep_col:
+                        sep_max = int(st.number_input(
+                            "Max pannelli", min_value=2, max_value=16, value=9, step=1,
+                            key="sep_max_inp",
+                        ))
 
             gen = st.button("▶  Genera grafico", type="primary", use_container_width=True)
 
@@ -1243,182 +1421,50 @@ elif _sel == _TABS[2]:
                         x = x_col or None
                         y = y_col or None
                         g = grp_col or None
+                        _dlz = int(_so.opt_data_lbl_sz)
 
-                        if chart_key == "bar_v":
-                            if x and y and g:
-                                agg    = _agg(df_filt, x, y, g)
-                                pivot  = agg.pivot_table(index=x, columns=g, values=y, aggfunc="sum").fillna(0)
-                                colors = _colors(len(pivot.columns), palette)
-                                pivot.plot.bar(ax=ax, color=colors)
-                                _smart_labels(ax, pivot.index, xtick_rot)
-                                if show_nums:
-                                    for container in ax.containers:
-                                        ax.bar_label(container, fmt="%.4g", fontsize=int(_so.opt_data_lbl_sz), padding=2)
-                            elif x and y:
-                                agg    = _agg(df_filt, x, y)
-                                vals   = pd.to_numeric(agg[y], errors="coerce").fillna(0)
-                                colors = _colors(len(agg), palette)
-                                ax.bar(range(len(agg)), vals, color=colors)
-                                ax.set_xticks(range(len(agg)))
-                                _smart_labels(ax, agg[x].astype(str), xtick_rot)
-                                if show_nums:
-                                    ax.bar_label(ax.containers[0], fmt="%.4g", fontsize=int(_so.opt_data_lbl_sz), padding=2)
-                            elif x:
-                                vc     = df_filt[x].value_counts()
-                                colors = _colors(len(vc), palette)
-                                ax.bar(range(len(vc)), vc.values, color=colors)
-                                ax.set_xticks(range(len(vc)))
-                                _smart_labels(ax, vc.index.astype(str), xtick_rot)
-                                if show_nums:
-                                    ax.bar_label(ax.containers[0], fmt="%d", fontsize=int(_so.opt_data_lbl_sz), padding=2)
-                            else:
-                                raise ValueError("Seleziona almeno Asse X.")
-
-                        elif chart_key == "bar_h":
-                            if x and y and g:
-                                agg   = _agg(df_filt, x, y, g)
-                                pivot = agg.pivot_table(index=x, columns=g, values=y, aggfunc="sum").fillna(0)
-                                pivot.plot.barh(ax=ax, color=_colors(len(pivot.columns), palette))
-                            elif x and y:
-                                agg  = _agg(df_filt, x, y)
-                                vals = pd.to_numeric(agg[y], errors="coerce").fillna(0)
-                                ax.barh(range(len(agg)), vals, color=_colors(len(agg), palette))
-                                ax.set_yticks(range(len(agg)))
-                                ax.set_yticklabels(agg[x].astype(str), fontsize=7)
-                            elif x:
-                                vc = df_filt[x].value_counts()
-                                ax.barh(range(len(vc)), vc.values, color=_colors(len(vc), palette))
-                                ax.set_yticks(range(len(vc)))
-                                ax.set_yticklabels(vc.index.astype(str), fontsize=7)
-                            else:
-                                raise ValueError("Seleziona almeno Asse X.")
-
-                        elif chart_key == "bar_stacked":
-                            if not (x and y and g):
-                                raise ValueError("Barre stacked richiedono Asse X, Asse Y e Raggruppa.")
-                            agg   = _agg(df_filt, x, y, g)
-                            pivot = agg.pivot_table(index=x, columns=g, values=y, aggfunc="sum").fillna(0)
-                            pivot.plot.bar(ax=ax, stacked=True, color=_colors(len(pivot.columns), palette))
-                            _smart_labels(ax, pivot.index, xtick_rot)
-
-                        elif chart_key == "line":
-                            if not (x and y):
-                                raise ValueError("Seleziona Asse X e Asse Y.")
-                            x_all = sorted(df_filt[x].dropna().unique(), key=str)
-                            x_pos = {str(v): i for i, v in enumerate(x_all)}
-                            if g:
-                                groups = sorted(df_filt[g].dropna().unique(), key=str)
-                                colors = _colors(len(groups), palette)
-                                for grp, col_ in zip(groups, colors):
-                                    sub   = df_filt[df_filt[g] == grp].sort_values(x)
-                                    xvals = [x_pos.get(str(v)) for v in sub[x]]
-                                    yvals = pd.to_numeric(sub[y], errors="coerce").tolist()
-                                    pairs = [(xv, yv) for xv, yv in zip(xvals, yvals)
-                                             if xv is not None and not pd.isna(yv)]
-                                    if pairs:
-                                        xs_, ys_ = zip(*pairs)
-                                        ax.plot(list(xs_), list(ys_), marker="o", markersize=4,
-                                                label=str(grp), color=col_)
-                            else:
-                                agg   = df_filt.groupby(x, sort=False)[y].sum().reset_index()
-                                xvals = [x_pos.get(str(v)) for v in agg[x]]
-                                yvals = pd.to_numeric(agg[y], errors="coerce").tolist()
-                                pairs = [(xv, yv) for xv, yv in zip(xvals, yvals)
-                                         if xv is not None and not pd.isna(yv)]
-                                if pairs:
-                                    xs_, ys_ = zip(*pairs)
-                                    ax.plot(list(xs_), list(ys_), marker="o", markersize=4)
-                            ax.set_xticks(range(len(x_all)))
-                            _smart_labels(ax, [str(v) for v in x_all], xtick_rot)
-
-                        elif chart_key == "scatter":
-                            if not (x and y):
-                                raise ValueError("Seleziona Asse X e Asse Y.")
-                            if g:
-                                groups = sorted(df_filt[g].dropna().unique(), key=str)
-                                colors = _colors(len(groups), palette)
-                                for grp, col_ in zip(groups, colors):
-                                    sub = df_filt[df_filt[g] == grp]
-                                    ax.scatter(pd.to_numeric(sub[x], errors="coerce"),
-                                               pd.to_numeric(sub[y], errors="coerce"),
-                                               label=str(grp), alpha=0.7, s=30, color=col_)
-                            else:
-                                ax.scatter(pd.to_numeric(df_filt[x], errors="coerce"),
-                                           pd.to_numeric(df_filt[y], errors="coerce"),
-                                           alpha=0.7, s=30,
-                                           c=[_get_cmap(palette, fallback="tab10")(0)])
-
-                        elif chart_key == "histogram":
-                            col_ = y or x
-                            if not col_:
-                                raise ValueError("Seleziona una colonna numerica.")
-                            if g:
-                                groups = sorted(df_filt[g].dropna().unique(), key=str)
-                                colors = _colors(len(groups), palette)
-                                for grp, col_c in zip(groups, colors):
-                                    vals = pd.to_numeric(
-                                        df_filt.loc[df_filt[g] == grp, col_], errors="coerce"
-                                    ).dropna()
-                                    ax.hist(vals, bins=20, alpha=0.55, label=str(grp), color=col_c)
-                            else:
-                                vals = pd.to_numeric(df_filt[col_], errors="coerce").dropna()
-                                ax.hist(vals, bins=20, color=_get_cmap(palette, fallback="tab10")(0))
-
-                        elif chart_key == "pie":
-                            if y and x:
-                                vc = df_filt.groupby(x)[y].sum().sort_values(ascending=False)
-                            elif x:
-                                vc = df_filt[x].value_counts()
-                            elif y:
-                                vc = df_filt[y].value_counts()
-                            else:
-                                raise ValueError("Seleziona almeno una colonna.")
-                            top = vc.head(12)
-                            wedges, texts, autotexts = ax.pie(
-                                top.values,
-                                labels=[str(l) for l in top.index],
-                                autopct="%1.1f%%", startangle=90,
-                                colors=_colors(len(top), palette),
+                        if sep_col and sep_col in df_filt.columns:
+                            # ── Modalità pannelli (Separa) ────────────────────
+                            vals_sep = sorted(
+                                df_filt[sep_col].dropna().unique(), key=str
+                            )[:sep_max]
+                            n = len(vals_sep)
+                            ncols = min(3, n)
+                            nrows = (n + ncols - 1) // ncols
+                            fig, axs = plt.subplots(
+                                nrows, ncols,
+                                figsize=(_fw * ncols / 1.5, _fh * nrows / 1.5),
+                                squeeze=False,
                             )
-                            for t in autotexts:
-                                t.set_fontsize(8)
-                            ax.axis("equal")
-
-                        elif chart_key == "heatmap":
-                            if not (x and y):
-                                raise ValueError("Seleziona Asse X (righe) e Asse Y (colonne).")
-                            val_col = g or next(
-                                (c for c, r in roles.items() if r == "dipend" and c != y), None)
-                            if val_col:
-                                piv = df_filt.pivot_table(index=x, columns=y, values=val_col, aggfunc="mean")
-                            else:
-                                piv = df_filt.pivot_table(index=x, columns=y, aggfunc="size", fill_value=0)
-                            im = ax.imshow(piv.values, aspect="auto", cmap=_get_cmap(palette, fallback="YlOrRd"))
-                            ax.set_xticks(range(len(piv.columns)))
-                            ax.set_xticklabels(piv.columns, rotation=45, ha="right", fontsize=7)
-                            ax.set_yticks(range(len(piv.index)))
-                            ax.set_yticklabels(piv.index, fontsize=7)
-                            fig.colorbar(im, ax=ax, shrink=0.7)
-
-                        elif chart_key == "boxplot":
-                            if not y:
-                                raise ValueError("Seleziona Asse Y (colonna numerica).")
-                            if x:
-                                cats = sorted(df_filt[x].dropna().unique(), key=str)
-                                data = [pd.to_numeric(
-                                    df_filt.loc[df_filt[x] == c, y], errors="coerce"
-                                ).dropna() for c in cats]
-                                bp = ax.boxplot(data, patch_artist=True)
-                                for patch, col_ in zip(bp["boxes"], _colors(len(cats), palette)):
-                                    patch.set_facecolor(col_)
-                                ax.set_xticks(range(1, len(cats) + 1))
-                                _smart_labels(ax, [str(c) for c in cats], xtick_rot)
-                            else:
-                                vals = pd.to_numeric(df_filt[y], errors="coerce").dropna()
-                                ax.boxplot(vals, patch_artist=True)
-
-                        _apply_style(ax, title, xlabel, ylabel, show_leg, show_grid, opts=style_opts)
-                        _apply_axis_settings(ax, axis_opts)
+                            for idx_p, val_p in enumerate(vals_sep):
+                                ax_p = axs[idx_p // ncols][idx_p % ncols]
+                                df_p = df_filt[
+                                    df_filt[sep_col].astype(str) == str(val_p)
+                                ]
+                                _render_chart_on_ax(
+                                    ax_p, df_p, chart_key, x, y, g,
+                                    palette, show_nums, xtick_rot, _dlz,
+                                )
+                                _apply_style(
+                                    ax_p,
+                                    f"{sep_col} = {val_p}",
+                                    xlabel, ylabel, show_leg, show_grid,
+                                    opts=style_opts,
+                                )
+                                _apply_axis_settings(ax_p, axis_opts)
+                            # Nasconde celle vuote se n non è multiplo di ncols
+                            for idx_p in range(n, nrows * ncols):
+                                axs[idx_p // ncols][idx_p % ncols].set_visible(False)
+                        else:
+                            # ── Grafico singolo ───────────────────────────────
+                            fig, ax = plt.subplots(figsize=(_fw, _fh))
+                            _render_chart_on_ax(
+                                ax, df_filt, chart_key, x, y, g,
+                                palette, show_nums, xtick_rot, _dlz,
+                            )
+                            _apply_style(ax, title, xlabel, ylabel, show_leg, show_grid,
+                                         opts=style_opts)
+                            _apply_axis_settings(ax, axis_opts)
 
                     fig.tight_layout(pad=1.5)
                     st.session_state.fig = fig
