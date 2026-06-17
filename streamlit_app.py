@@ -1192,42 +1192,105 @@ def _render_chart_on_ax(ax, df_sub, chart_key, x, y, g,
         if not x:
             raise ValueError("Seleziona Asse X (etichette) per l'imbuto.")
         import matplotlib.patches as mpatches
-        agg_df, vcol = _agg_by_x(df_sub, x, y)
-        agg_df  = agg_df.sort_values(vcol, ascending=False).reset_index(drop=True)
-        labels  = list(agg_df[x].astype(str))
-        values  = list(pd.to_numeric(agg_df[vcol], errors="coerce").fillna(0))
-        N = len(labels)
-        if N < 2:
-            raise ValueError("L'imbuto richiede almeno 2 categorie.")
-        colors  = _colors(N, palette)
-        v_max   = max(values) or 1
         cx, max_h, min_h = 0.5, 0.42, 0.07
-        halfs   = [min_h + (v / v_max) * (max_h - min_h) for v in values]
-        ax.axis("off")
-        ax.set_xlim(-0.6, 1.6)
-        ax.set_ylim(-0.3, N + 0.3)
-        for i in range(N):
-            col_   = colors[i]
-            y_top  = N - i;  y_bot = N - i - 1;  y_mid = (y_top + y_bot) / 2
-            h_top  = halfs[i];  h_bot = halfs[i + 1] if i + 1 < N else min_h
-            r0, g0, b0, _ = mcolors.to_rgba(col_)
-            hi = (min(1, r0*1.4), min(1, g0*1.4), min(1, b0*1.4), 0.7)
-            ax.add_patch(mpatches.Polygon(
-                [[cx-h_top, y_top], [cx+h_top, y_top],
-                 [cx+h_bot, y_bot], [cx-h_bot, y_bot]],
-                closed=True, facecolor=col_, edgecolor="white", linewidth=0.8, zorder=2))
-            ax.plot([cx-h_top, cx+h_top], [y_top, y_top],
-                    color=hi, linewidth=2.5, zorder=4, solid_capstyle="round")
-            ax.annotate("", xy=(-0.04, y_mid), xytext=(cx-h_top, y_mid),
+
+        def _conn_f(dst, src, col_):
+            ax.annotate("", xy=dst, xytext=src,
                         arrowprops=dict(arrowstyle="-", color=col_, lw=0.85, alpha=0.65), zorder=3)
-            ax.text(-0.08, y_mid, str(labels[i]),
-                    ha="right", va="center", fontsize=9, fontweight="bold",
-                    color="#1a1a1a", zorder=5)
-            pct = values[i] / values[0] * 100 if values[0] else 0
-            ax.annotate("", xy=(1.04, y_mid), xytext=(cx+h_top, y_mid),
-                        arrowprops=dict(arrowstyle="-", color=col_, lw=0.85, alpha=0.65), zorder=3)
-            ax.text(1.08, y_mid, f"{int(round(values[i])):,}  ({pct:.1f} %)",
-                    ha="left", va="center", fontsize=9, color="#1a1a1a", zorder=5)
+
+        if g and not is_freq:
+            # ── Funnel con Raggruppa: ogni trapezio è diviso in segmenti per gruppo ──
+            cats   = sorted(df_sub[x].dropna().unique(), key=str)
+            groups = sorted(df_sub[g].dropna().unique(), key=str)
+            totals = {cat: float(pd.to_numeric(df_sub.loc[df_sub[x]==cat, y if y else "_"],
+                                               errors="coerce").sum() if y else len(df_sub[df_sub[x]==cat]))
+                      for cat in cats}
+            # somma reale: se y è una colonna, somma; altrimenti conta le righe
+            if y and y != _FREQ_LABEL:
+                totals = {cat: float(pd.to_numeric(df_sub.loc[df_sub[x]==cat, y],
+                                                   errors="coerce").sum()) for cat in cats}
+            else:
+                totals = {cat: float((df_sub[x] == cat).sum()) for cat in cats}
+            cats   = sorted(cats, key=lambda c: totals.get(c, 0), reverse=True)
+            N      = len(cats)
+            if N < 2:
+                raise ValueError("L'imbuto richiede almeno 2 categorie.")
+            if y and y != _FREQ_LABEL:
+                piv = (df_sub.groupby([x, g])[y].sum()).unstack(g).reindex(cats).fillna(0)
+            else:
+                piv = (df_sub.groupby([x, g]).size()).unstack(g).reindex(cats).fillna(0)
+            piv    = piv.reindex(columns=[gr for gr in groups if gr in piv.columns])
+            v_max  = max(totals.values()) or 1
+            halfs  = [min_h + (totals.get(c, 0) / v_max) * (max_h - min_h) for c in cats]
+            cc     = _cat_colors(groups, palette)
+            ax.axis("off"); ax.set_xlim(-0.6, 1.6); ax.set_ylim(-0.3, N + 0.3)
+            for i, cat in enumerate(cats):
+                y_top = N - i;  y_bot = N - i - 1;  y_mid = (y_top + y_bot) / 2
+                h_top = halfs[i];  h_bot = halfs[i+1] if i+1 < N else min_h
+                row_tot = float(piv.loc[cat].sum()) if cat in piv.index else 1.0
+                if row_tot <= 0:
+                    row_tot = 1.0
+                off_top = cx - h_top;  off_bot = cx - h_bot
+                full_top = 2 * h_top;  full_bot = 2 * h_bot
+                for grp in groups:
+                    val = float(piv.loc[cat, grp]) if (cat in piv.index and grp in piv.columns) else 0.0
+                    if val <= 0:
+                        continue
+                    frac   = val / row_tot
+                    sw_top = frac * full_top;  sw_bot = frac * full_bot
+                    col_   = cc[grp]
+                    ax.add_patch(mpatches.Polygon(
+                        [[off_top, y_top], [off_top+sw_top, y_top],
+                         [off_bot+sw_bot, y_bot], [off_bot, y_bot]],
+                        closed=True, facecolor=col_, edgecolor="white", linewidth=0.8, zorder=2))
+                    off_top += sw_top;  off_bot += sw_bot
+                ax.plot([cx-h_top, cx+h_top], [y_top, y_top],
+                        color="white", linewidth=1.2, zorder=4)
+                pct = totals.get(cat, 0) / v_max * 100
+                _conn_f((-0.04, y_mid), (cx-h_top, y_mid), "#999")
+                ax.text(-0.08, y_mid, str(cat),
+                        ha="right", va="center", fontsize=9, fontweight="bold",
+                        color="#1a1a1a", zorder=5)
+                _conn_f((1.04, y_mid), (cx+h_top, y_mid), "#999")
+                ax.text(1.08, y_mid, f"{int(round(totals.get(cat,0))):,}  ({pct:.1f} %)",
+                        ha="left", va="center", fontsize=9, color="#1a1a1a", zorder=5)
+            handles = [mpatches.Patch(facecolor=cc[gr], label=str(gr))
+                       for gr in groups if gr in cc]
+            if handles:
+                ax.legend(handles=handles, fontsize=8, loc="lower right")
+        else:
+            # ── Funnel semplice (un colore per livello) ────────────────────────
+            agg_df, vcol = _agg_by_x(df_sub, x, y)
+            agg_df  = agg_df.sort_values(vcol, ascending=False).reset_index(drop=True)
+            labels  = list(agg_df[x].astype(str))
+            values  = list(pd.to_numeric(agg_df[vcol], errors="coerce").fillna(0))
+            N = len(labels)
+            if N < 2:
+                raise ValueError("L'imbuto richiede almeno 2 categorie.")
+            colors = _colors(N, palette)
+            v_max  = max(values) or 1
+            halfs  = [min_h + (v / v_max) * (max_h - min_h) for v in values]
+            ax.axis("off"); ax.set_xlim(-0.6, 1.6); ax.set_ylim(-0.3, N + 0.3)
+            for i in range(N):
+                col_   = colors[i]
+                y_top  = N - i;  y_bot = N - i - 1;  y_mid = (y_top + y_bot) / 2
+                h_top  = halfs[i];  h_bot = halfs[i + 1] if i + 1 < N else min_h
+                r0, g0, b0, _ = mcolors.to_rgba(col_)
+                hi = (min(1, r0*1.4), min(1, g0*1.4), min(1, b0*1.4), 0.7)
+                ax.add_patch(mpatches.Polygon(
+                    [[cx-h_top, y_top], [cx+h_top, y_top],
+                     [cx+h_bot, y_bot], [cx-h_bot, y_bot]],
+                    closed=True, facecolor=col_, edgecolor="white", linewidth=0.8, zorder=2))
+                ax.plot([cx-h_top, cx+h_top], [y_top, y_top],
+                        color=hi, linewidth=2.5, zorder=4, solid_capstyle="round")
+                _conn_f((-0.04, y_mid), (cx-h_top, y_mid), col_)
+                ax.text(-0.08, y_mid, str(labels[i]),
+                        ha="right", va="center", fontsize=9, fontweight="bold",
+                        color="#1a1a1a", zorder=5)
+                pct = values[i] / values[0] * 100 if values[0] else 0
+                _conn_f((1.04, y_mid), (cx+h_top, y_mid), col_)
+                ax.text(1.08, y_mid, f"{int(round(values[i])):,}  ({pct:.1f} %)",
+                        ha="left", va="center", fontsize=9, color="#1a1a1a", zorder=5)
 
     # ── PODIO ─────────────────────────────────────────────────────────────────
     elif chart_key == "podio":
